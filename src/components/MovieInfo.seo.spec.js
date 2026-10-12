@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const useHeadMock = vi.fn()
 const getKpInfoMock = vi.fn()
-const authMock = { token: '' }
+const authMock = { token: '', isWorkerSession: false }
 const mainMock = {
   isCommentsEnabled: true,
   isStreamerMode: false,
   isMobile: false,
   isHistoryAllowed: false,
+  contentApiProvider: 'kinobox',
   addToHistory: vi.fn()
 }
 
@@ -126,6 +127,8 @@ describe('MovieInfo SEO', () => {
       import('./movie/MovieMobileListDropdown.vue')
     ])
     authMock.token = ''
+    authMock.isWorkerSession = false
+    mainMock.contentApiProvider = 'kinobox'
     mainMock.isMobile = false
     useHeadMock.mockReset()
     getKpInfoMock.mockReset()
@@ -225,4 +228,42 @@ describe('MovieInfo SEO', () => {
       wrapper.unmount()
     }
   })
+
+  it.each([false, true])('keeps the loading layout while movie data arrives before the player chunk (mobile=%s)', async (mobile) => {
+    mainMock.isMobile = mobile
+    let releasePlayer
+    const pendingPlayer = new Promise((resolve) => { releasePlayer = resolve })
+    vi.doMock('@/components/PlayerComponent.vue', async () => {
+      await pendingPlayer
+      return { default: { name: 'PlayerComponent', template: '<div class="test-player" />' } }
+    })
+    const MovieInfo = (await import('./MovieInfo.vue')).default
+    const wrapper = shallowMount(MovieInfo, {
+      global: {
+        plugins: [createTestingPinia({ createSpy: vi.fn })],
+        stubs: {
+          PlayerComponent: { name: 'PlayerComponent', template: '<div class="test-player" />' },
+          MovieRating: true, MovieList: true, Notification: true,
+          TrailerCarousel: true, Comments: true, RouterLink: true
+        }
+      }
+    })
+    try {
+      await flushPromises()
+      expect(getKpInfoMock).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('.movie-skeleton').exists()).toBe(true)
+      expect(wrapper.find('#movie-details').exists()).toBe(false)
+      releasePlayer()
+      await vi.waitFor(() => expect(wrapper.find('.test-player').exists()).toBe(true))
+      expect(wrapper.find('#movie-details').exists()).toBe(true)
+      expect(wrapper.find('.movie-skeleton').exists()).toBe(false)
+      expect(getKpInfoMock).toHaveBeenCalledTimes(1)
+    } finally {
+      releasePlayer()
+      await flushPromises()
+      wrapper.unmount()
+      vi.doUnmock('@/components/PlayerComponent.vue')
+    }
+  })
+
 })

@@ -1,12 +1,28 @@
 import axios from 'axios'
-import { getCurrentApiUrl } from '@/firebase/firebase'
 import { useAuthStore } from '@/store/auth'
 import { useApiStore } from '@/store/api'
 import { isTrustedApiRequest } from '@/utils/apiTrust'
+import { getCurrentApiUrl } from './backendConfig'
 
 let apiInstance = null
 let apiInstancePromise = null
 let apiInstanceGeneration = 0
+const SENSITIVE_QUERY_KEYS = /^(?:token|access_token|auth|authorization|code|key|api_key|apikey|secret|password|signature|sig)$/i
+
+export const redactRequestUrl = (value, baseURL = '') => {
+  try {
+    const url = new URL(value || '', baseURL || undefined)
+    if (!/^https?:$/.test(url.protocol)) return '[non-http URL]'
+    for (const key of [...url.searchParams.keys()])
+      url.searchParams.set(key, SENSITIVE_QUERY_KEYS.test(key) ? '[REDACTED]' : '[omitted]')
+    url.username = ''
+    url.password = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return String(value || '').split(/[?#]/, 1)[0] || '[unknown URL]'
+  }
+}
 
 const getResolvedBaseUrl = async () => {
   const baseURL = await getCurrentApiUrl()
@@ -44,15 +60,13 @@ const attachDynamicRequestState = (instance) => {
     (err) => {
       const method = err.config?.method?.toUpperCase?.() || 'REQUEST'
       const baseURL = err.config?.baseURL || instance.defaults.baseURL || ''
-      const url = err.config?.url || ''
-      const requestUrl = url.startsWith('http') ? url : `${baseURL}${url}`
+      const requestUrl = redactRequestUrl(err.config?.url || '', baseURL)
 
       console.error('[API Error]', {
         method,
         url: requestUrl,
         status: err.response?.status,
-        data: err.response?.data,
-        message: err.message
+        message: err.code || 'Request failed'
       })
       return Promise.reject(err)
     }

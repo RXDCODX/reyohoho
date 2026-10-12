@@ -54,6 +54,30 @@ describe('public provider cache', () => {
       code: 'ERR_CANCELED'
     })
   })
+  it('keeps signal-owned requests separate and aborts only the canceled transport', async () => {
+    const cache = createPublicDataCache()
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+    const signals = []
+    const load = vi.fn(
+      (signal) =>
+        new Promise((_resolve, reject) => {
+          signals.push(signal)
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' })))
+        })
+    )
+    const first = cache('movie:301', load, 1000, { signal: firstController.signal })
+    const second = cache('movie:301', load, 1000, { signal: secondController.signal })
+    expect(load).toHaveBeenCalledTimes(2)
+    firstController.abort()
+    await expect(first).rejects.toMatchObject({ code: 'ERR_CANCELED' })
+    expect(secondController.signal.aborted).toBe(false)
+    secondController.abort()
+    await expect(second).rejects.toMatchObject({ code: 'ERR_CANCELED' })
+    expect(signals[0]).not.toBe(signals[1])
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[1].aborted).toBe(true)
+  })
   it('bypasses shared state for SSR or customized requests', async () => {
     const cache = createPublicDataCache()
     const load = vi.fn(async () => ({}))

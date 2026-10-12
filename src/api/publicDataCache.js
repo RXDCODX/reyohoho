@@ -19,7 +19,7 @@ export function createPublicDataCache({
     { signal, validate = () => true, bypass = false } = {}
   ) {
     if (signal?.aborted) throw Object.assign(new Error('Canceled'), { code: 'ERR_CANCELED' })
-    if (bypass) return load()
+    if (bypass) return load(signal)
     for (const [entryKey, entry] of values) {
       if (entry.expires <= now()) remove(entryKey)
     }
@@ -30,10 +30,10 @@ export function createPublicDataCache({
       return JSON.parse(hit.json)
     }
     // A caller-owned AbortSignal must not cancel another caller's transport.
-    // Signalled requests retain their own transport; settled data is still shared.
+    // Signalled requests keep independent transports; only unsignalled calls deduplicate.
     if (!signal && pending.has(key)) return JSON.parse(await pending.get(key))
     const promise = (async () => {
-      const data = await load()
+      const data = await load(signal)
       const json = JSON.stringify(data)
       const size = json.length * 2
       if (!signal?.aborted && validate(data) && size <= maxBytes) {

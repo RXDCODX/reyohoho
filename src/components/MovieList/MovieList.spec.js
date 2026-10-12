@@ -155,6 +155,31 @@ describe('Тесты компонента MovieList', () => {
     expect(wrapper.findComponent(SpinnerLoading).exists()).toBe(false)
   })
 
+  it('ignores keyboard events belonging to another mounted list', async () => {
+    const first = mountComponent(false, true)
+    const second = mountComponent(false, false, BASE_MOVIES_MOCK.slice(0, 2))
+    const cards = second.findAllComponents(CardMovie)
+    cards[0].element.focus()
+    await cards[0].trigger('keydown', { key: 'ArrowRight' })
+    await flushPromises()
+    expect(first.find('.movie-card.active').exists()).toBe(false)
+    expect(document.activeElement).toBe(cards[1].element)
+    first.unmount()
+    second.unmount()
+  })
+
+  it('uses the newly focused card after returning to a retained list', async () => {
+    const wrapper = mountComponent(false, true)
+    const cards = wrapper.findAllComponents(CardMovie)
+    for (let repeat = 0; repeat < 2; repeat++) {
+      cards[0].element.focus()
+      await cards[0].trigger('keydown', { key: 'ArrowRight' })
+      await flushPromises()
+      expect(document.activeElement).toBe(cards[1].element)
+    }
+    wrapper.unmount()
+  })
+
   it('Отображает спиннер при загрузке', () => {
     const wrapper = mountComponent(true)
     expect(wrapper.findComponent(SpinnerLoading).exists()).toBe(true)

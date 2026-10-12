@@ -30,12 +30,6 @@ export const LAZY_LOADING_CONFIG = {
     rootMargin: '0px',
     threshold: 0.1
   },
-  filter: {
-    progressive(listener) {
-      const quality = 'q_auto,f_auto,w_auto,dpr_auto'
-      listener.src = `${listener.src}?${quality}`
-    }
-  },
   adapter: {
     loaded({ el }) {
       el.classList.add('loaded')

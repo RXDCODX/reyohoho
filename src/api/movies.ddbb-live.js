@@ -22,13 +22,15 @@ const simulateErrorIfNeeded = async () => {
   }
 }
 
-const getPlayersRaw = async (kpId, { n = 0 } = {}) => {
+const getPlayersRaw = async (kpId, { n = 0, signal, ...options } = {}) => {
   await simulateErrorIfNeeded()
   const { data } = await api.get('/api/players', {
+    ...options,
     params: {
       kinopoisk: String(kpId),
       n
-    }
+    },
+    ...(signal ? { signal } : {})
   })
 
   return Array.isArray(data?.data) ? data.data : []

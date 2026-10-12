@@ -24,22 +24,29 @@ const simulateErrorIfNeeded = async () => {
 const publicData = createPublicDataCache()
 const publicGet = async (path, config, ttl, validate) => {
   await simulateErrorIfNeeded()
-  const key = JSON.stringify([config.baseURL || KINOBOX_BASE_URL, path, config.params || {}])
-  const data = await publicData(key, async () => (await api.get(path, config)).data, ttl, {
-    signal: config.signal,
-    validate,
+  const { signal, ...requestConfig } = config
+  const key = JSON.stringify([requestConfig.baseURL || KINOBOX_BASE_URL, path, requestConfig.params || {}])
+  const data = await publicData(
+    key,
+    async (requestSignal) =>
+      (await api.get(path, { ...requestConfig, ...(requestSignal ? { signal: requestSignal } : {}) })).data,
+    ttl,
+    {
+      signal,
+      validate,
     // No shared module cache during SSR or for customized/authenticated requests.
     bypass:
       import.meta.env.SSR ||
       Boolean(
-        config.headers ||
-        config.auth ||
-        config.adapter ||
-        config.transformResponse ||
-        config.cancelToken ||
-        config.withCredentials
+        requestConfig.headers ||
+        requestConfig.auth ||
+        requestConfig.adapter ||
+        requestConfig.transformResponse ||
+        requestConfig.cancelToken ||
+        requestConfig.withCredentials
       )
-  })
+    }
+  )
   return { data }
 }
 
@@ -247,10 +254,11 @@ const toPlayersMap = (providers = [], { type = null } = {}) => {
   return players
 }
 
-const getPlayersRaw = async (kpId, { title = '' } = {}) => {
+const getPlayersRaw = async (kpId, { title = '', signal } = {}) => {
   const { data } = await publicGet(
     '/api/players',
     {
+      signal,
       params: {
         kinopoisk: String(kpId),
         ...(title ? { title: String(title) } : {})

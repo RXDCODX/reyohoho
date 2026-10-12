@@ -70,13 +70,15 @@ const toPlayersMap = (
   return players
 }
 
-const getPlayersRaw = async (kpId, { n = 0 } = {}) => {
+const getPlayersRaw = async (kpId, { n = 0, signal, ...options } = {}) => {
   const { data } = await apiCall((client) =>
     client.get('/api/players', {
+      ...options,
       params: {
         kinopoisk: String(kpId),
         n
-      }
+      },
+      ...(signal ? { signal } : {})
     })
   )
 

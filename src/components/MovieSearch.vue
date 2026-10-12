@@ -62,7 +62,7 @@
       <div class="content-container">
         <HistoryMigrationNotice v-show="!searchTerm" />
         <!-- История просмотра -->
-        <div v-if="!searchTerm">
+        <div v-show="!searchTerm">
           <h2>
             История просмотра
             <span v-if="history.length > 0">
@@ -108,7 +108,7 @@
             </template>
           </div>
           <MovieList
-            v-else
+            v-else-if="historyActivated"
             :movies-list="history"
             :is-history="true"
             :loading="false"
@@ -122,7 +122,7 @@
         />
 
         <!-- Результаты поиска -->
-        <div v-if="searchPerformed">
+        <div v-if="searchPerformed" ref="searchResults">
           <h2>Результаты поиска</h2>
           <MovieList :movies-list="movies" :is-history="false" :loading="loading" />
           <div v-if="movies.length === 0 && !loading && !errorMessage" class="no-results">
@@ -200,6 +200,8 @@ const errorMessage = ref('')
 const errorCode = ref(null)
 const isMobile = computed(() => mainStore.isMobile)
 const history = ref([])
+// Personal history is client data. Mount its cards only after the first display.
+const historyActivated = ref(false)
 const deletedHistoryIds = ref(new Set())
 const topMovies = ref([])
 const topMoviesLoading = ref(false)
@@ -235,6 +237,7 @@ const randomLoading = ref(false)
 const randomError = ref('')
 
 const searchInput = ref(null)
+const searchResults = ref(null)
 const siteOrigin = import.meta.env.VITE_SITE_ORIGIN || 'https://reyhoho.fun'
 const basePath = normalizeBasePath(import.meta.env.VITE_BASE_URL || '/')
 const canonicalUrl = `${siteOrigin}${basePath || ''}/`
@@ -655,6 +658,7 @@ onMounted(() => {
     searchTerm.value = shikiId
     performSearch()
   }
+  if (!searchTerm.value) historyActivated.value = true
   searchInput.value?.focus()
 })
 
@@ -667,6 +671,7 @@ onUnmounted(() => {
 
 // Автопоиск с задержкой (только для поиска по названию)
 watch(searchTerm, () => {
+  if (!searchTerm.value) historyActivated.value = true
   if (searchType.value !== 'title') {
     return
   }
@@ -675,7 +680,7 @@ watch(searchTerm, () => {
 
 const focusFirstMovieCard = () => {
   if (movies.value.length > 0) {
-    const firstMovieCard = document.querySelector('.movie-card')
+    const firstMovieCard = searchResults.value?.querySelector('.movie-card')
     if (firstMovieCard) {
       firstMovieCard.focus()
     }

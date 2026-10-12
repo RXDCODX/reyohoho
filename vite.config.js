@@ -134,7 +134,6 @@ export default defineConfig(({ mode }) => {
           entryFileNames: 'assets/immutable/[name]-[hash].js',
           manualChunks(id) {
             if (!id.includes('node_modules')) return
-            if (id.includes('/firebase/') || id.includes('@firebase')) return 'vendor-firebase'
             if (id.includes('/dompurify/')) return 'vendor-sanitize'
             if (id.includes('/axios/')) return 'vendor-http'
             if (id.includes('/vue') || id.includes('/pinia') || id.includes('@unhead')) {

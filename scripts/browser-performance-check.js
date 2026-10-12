@@ -6,12 +6,12 @@ import {
   collectPerformance,
   createCleanContext,
   reportsDir,
-  resolveAppUrl
+  resolveAppUrl,
+  summarizeBrowserResources,
+  summarizeResourceTransfer
 } from './browser-test-utils.js'
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:4176/'
-
-const toKb = (bytes) => Math.round((bytes / 1024) * 10) / 10
 
 async function ensureReportsDir() {
   await fs.mkdir(reportsDir, { recursive: true })
@@ -20,6 +20,15 @@ async function ensureReportsDir() {
 async function measurePage(page, name, url, readySelector) {
   const responses = []
   const consoleErrors = []
+  const requests = []
+  const onRequest = (request) => {
+    const requestUrl = new URL(request.url())
+    requests.push({
+      url: requestUrl.origin === new URL(baseUrl).origin ? requestUrl.pathname : `${requestUrl.origin}${requestUrl.pathname}`,
+      method: request.method(),
+      type: request.resourceType()
+    })
+  }
 
   const onResponse = async (response) => {
     const headers = response.headers()
@@ -28,7 +37,7 @@ async function measurePage(page, name, url, readySelector) {
       url: response.url(),
       status: response.status(),
       contentType: headers['content-type'] || '',
-      bytes: Number.isFinite(length) ? length : 0
+      bytes: Number.isFinite(length) && length > 0 ? length : null
     })
   }
 
@@ -40,6 +49,7 @@ async function measurePage(page, name, url, readySelector) {
 
   page.on('response', onResponse)
   page.on('console', onConsole)
+  page.on('request', onRequest)
 
   const startedAt = Date.now()
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
@@ -55,11 +65,22 @@ async function measurePage(page, name, url, readySelector) {
 
   const metrics = {
     ...(await collectPerformance(page)),
+    resources: await page.evaluate(() =>
+      performance.getEntriesByType('resource').map((entry) => ({
+        name: entry.name,
+        initiatorType: entry.initiatorType,
+        encodedBodySize: entry.encodedBodySize,
+        transferSize: entry.transferSize
+      }))
+    ).then(summarizeBrowserResources),
     cardCount: await page.locator('.movie-card').count()
   }
+  metrics.navigationVitals = metrics.labVitals
+  metrics.labVitals = null
 
   page.off('response', onResponse)
   page.off('console', onConsole)
+  page.off('request', onRequest)
 
   return {
     name,
@@ -68,7 +89,8 @@ async function measurePage(page, name, url, readySelector) {
     metrics,
     network: {
       requestCount: responses.length,
-      knownTransferKb: toKb(responses.reduce((total, response) => total + response.bytes, 0)),
+      ...summarizeResourceTransfer(responses),
+      requests,
       failed: responses.filter((response) => response.status >= 400).slice(0, 20)
     },
     consoleErrors: consoleErrors.slice(0, 20)
@@ -88,11 +110,13 @@ async function measureInteraction(page) {
     .first()
     .waitFor({ state: 'visible', timeout: 20000 })
   const endedAt = Date.now()
+  const interactionMetrics = await collectPerformance(page)
   const resultCards = await page.locator('.content-container .movie-card').count()
   if (resultCards === 0) throw new Error('search interaction returned no movie cards')
 
   return {
     searchInteractionMs: endedAt - startedAt,
+    interactionVitals: interactionMetrics.labVitals,
     resultCards,
     url: page.url()
   }

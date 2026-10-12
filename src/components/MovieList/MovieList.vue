@@ -58,7 +58,7 @@ import Spinner from '@/components/SpinnerLoading.vue'
 import { useBackgroundStore } from '@/store/background'
 import { useMainStore } from '@/store/main'
 import { useAuthStore } from '@/store/auth'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { CardMovie, CardMovieSwipeWrapper } from '../CardMovie'
 import { delFromList } from '@/api/user'
@@ -90,7 +90,6 @@ const {
 })
 
 const movieRefs = ref([])
-const activeMovieIndex = ref(null)
 const deletingIds = ref(new Set())
 
 const isCardBorder = computed(() => backgroundStore.isCardBorder)
@@ -150,18 +149,21 @@ const handleKeyDown = (event) => {
   }
 
   const focusedIndex = movieRefs.value.findIndex((element) => element === focusedCard)
-  const currentIndex = activeMovieIndex.value ?? (focusedIndex >= 0 ? focusedIndex : 0)
+  // Multiple lists can remain mounted while search hides the history.
+  if (focusedIndex < 0) return
+  const currentIndex = focusedIndex
+  let nextIndex = null
 
-  const grid = document.querySelector('.grid')
+  const grid = focusedCard.closest('.grid')
   const gridStyle = window.getComputedStyle(grid)
   const columns = gridStyle.gridTemplateColumns.split(' ').length
 
   switch (event.key) {
     case 'ArrowRight':
-      activeMovieIndex.value = (currentIndex + 1) % moviesList.length
+      nextIndex = (currentIndex + 1) % moviesList.length
       break
     case 'ArrowLeft':
-      activeMovieIndex.value = (currentIndex - 1 + moviesList.length) % moviesList.length
+      nextIndex = (currentIndex - 1 + moviesList.length) % moviesList.length
       break
     case 'ArrowUp':
       event.preventDefault()
@@ -171,18 +173,18 @@ const handleKeyDown = (event) => {
           searchInput.focus()
         }
       } else {
-        activeMovieIndex.value = Math.max(currentIndex - columns, 0)
+        nextIndex = Math.max(currentIndex - columns, 0)
       }
       break
     case 'ArrowDown':
       event.preventDefault()
-      activeMovieIndex.value = Math.min(currentIndex + columns, moviesList.length - 1)
+      nextIndex = Math.min(currentIndex + columns, moviesList.length - 1)
       break
     case 'Home':
-      activeMovieIndex.value = 0
+      nextIndex = 0
       break
     case 'End':
-      activeMovieIndex.value = moviesList.length - 1
+      nextIndex = moviesList.length - 1
       break
     case 'Enter':
       if (event.ctrlKey || event.metaKey) {
@@ -193,18 +195,16 @@ const handleKeyDown = (event) => {
       }
       break
   }
-}
 
-watch(activeMovieIndex, (newIndex) => {
-  if (movieRefs.value[newIndex]) {
-    movieRefs.value[newIndex].scrollIntoView({
+  if (nextIndex !== null && movieRefs.value[nextIndex]) {
+    movieRefs.value[nextIndex].scrollIntoView({
       behavior: 'smooth',
       block: 'center',
       inline: 'center'
     })
-    movieRefs.value[newIndex].focus()
+    movieRefs.value[nextIndex].focus()
   }
-})
+}
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeyDown)

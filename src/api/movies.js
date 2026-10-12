@@ -98,23 +98,34 @@ const createProviderTimeoutError = (provider) => {
   return error
 }
 
-const withProviderTimeout = async (promise, provider) => {
+const withProviderTimeout = async (load, provider, parentSignal) => {
+  const controller = new AbortController()
   let timeoutId = null
+  let abortListener
+  let rejectAbort
+  const abortPromise = new Promise((_, reject) => {
+    rejectAbort = reject
+    abortListener = () => reject(controller.signal.reason || Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' }))
+    controller.signal.addEventListener('abort', abortListener, { once: true })
+  })
+  const parentAbort = () =>
+    controller.abort(parentSignal.reason || Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' }))
+  if (parentSignal?.aborted) parentAbort()
+  else parentSignal?.addEventListener('abort', parentAbort, { once: true })
 
   try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(createProviderTimeoutError(provider)),
-          PLAYER_PROVIDER_TIMEOUT_MS
-        )
-      })
-    ])
+    if (controller.signal.aborted) {
+      rejectAbort(controller.signal.reason)
+      return await abortPromise
+    }
+    timeoutId = setTimeout(() => controller.abort(createProviderTimeoutError(provider)), PLAYER_PROVIDER_TIMEOUT_MS)
+    return await Promise.race([load(controller.signal), abortPromise])
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId)
     }
+    controller.signal.removeEventListener('abort', abortListener)
+    parentSignal?.removeEventListener('abort', parentAbort)
   }
 }
 
@@ -128,7 +139,7 @@ const trackPlayerProviderAttempt = (eventName, params) => {
 const getPlayersWithFallback = async (...args) => {
   const provider = getCurrentProvider()
   const startedAt = Date.now()
-  const [contentId] = args
+  const [contentId, playerOptions = {}] = args
   const order = getPlayerProviderOrder(provider)
 
   for (const currentProvider of order) {
@@ -137,7 +148,19 @@ const getPlayersWithFallback = async (...args) => {
     let error = null
     try {
       const providerApi = await loadProvider(currentProvider)
-      players = await withProviderTimeout(providerApi.getPlayers(...args), currentProvider)
+      players = await withProviderTimeout(
+        (signal) =>
+          providerApi.getPlayers(
+            contentId,
+            {
+              ...playerOptions,
+              signal
+            },
+            ...args.slice(2)
+          ),
+        currentProvider,
+        playerOptions.signal
+      )
     } catch (requestError) {
       error = requestError
     }
@@ -158,6 +181,7 @@ const getPlayersWithFallback = async (...args) => {
       isTimeout ? 'player_provider_timeout' : error ? 'player_provider_error' : null,
       attemptPayload
     )
+    if (error) rethrowRequestCancellation(error)
     if (error) console.warn(`[movies] getPlayers failed on ${currentProvider}`, error)
     if (!error && hasPlayers(players)) return mergePlayerMaps([players])
   }

@@ -4,6 +4,14 @@ import { KINOPOISK_TOP_QUERY } from './kinopoisk-top-query.mjs'
 const ENDPOINT = 'https://graphql.kinopoisk.ru/graphql/?operationName=MovieDesktopListPage'
 const MAX_BYTES = 1024 * 1024
 const LISTS = { movie: 'top250', series: 'series-top250' }
+const inFlight = new Map()
+const LEASE_MS = 20_000
+// At most 40 polling reads per 20-second lease, leaving room for the
+// initial cache read, upstream fetch and write on Workers Free (50 calls).
+const WAIT_MS = 500
+const MAX_IN_FLIGHT = 256
+const upstreamError = (message, reason, upstreamStatus) =>
+  Object.assign(new Error(message), { reason, upstreamStatus })
 
 export function resolveKinopoiskTop(url) {
   if (url.pathname !== '/api/kinopoisk/top') return null
@@ -61,8 +69,9 @@ export async function requestKinopoiskTop(resource, fetchImpl = fetch, timeoutMs
         }
       })
     })
-    if (!response.ok) throw new Error('Kinopoisk upstream HTTP ' + response.status)
-    if (!response.body) throw new Error('Empty Kinopoisk response')
+    if (!response.ok)
+      throw upstreamError('Kinopoisk upstream HTTP ' + response.status, 'http', response.status)
+    if (!response.body) throw upstreamError('Empty Kinopoisk response', 'empty')
     reader = response.body.getReader()
     const chunks = []
     let size = 0
@@ -70,7 +79,7 @@ export async function requestKinopoiskTop(resource, fetchImpl = fetch, timeoutMs
       const { done, value } = await reader.read()
       if (done) break
       size += value.length
-      if (size > MAX_BYTES) throw new Error('Kinopoisk response too large')
+      if (size > MAX_BYTES) throw upstreamError('Kinopoisk response too large', 'size')
       chunks.push(value)
     }
     const bytes = new Uint8Array(size)
@@ -82,8 +91,8 @@ export async function requestKinopoiskTop(resource, fetchImpl = fetch, timeoutMs
     const data = JSON.parse(new TextDecoder().decode(bytes))
     const list = data?.data?.movieListBySlug
     const items = list?.movies?.items
+    if (data?.errors?.length) throw upstreamError('Invalid Kinopoisk top response', 'graphql')
     if (
-      data.errors?.length ||
       !Array.isArray(items) ||
       !Number.isInteger(list?.movies?.total) ||
       list.movies.total < 1 ||
@@ -91,7 +100,7 @@ export async function requestKinopoiskTop(resource, fetchImpl = fetch, timeoutMs
       items.length > Number(limit) ||
       items.some((item) => !Number.isInteger(item?.movie?.id) || item.movie.id < 1)
     ) {
-      throw new Error('Invalid Kinopoisk top response')
+      throw upstreamError('Invalid Kinopoisk top response', 'schema')
     }
     // Forward only public card data, not the origin's user/advertising fields.
     return {
@@ -116,7 +125,7 @@ export async function requestKinopoiskTop(resource, fetchImpl = fetch, timeoutMs
       source: 'kinopoisk'
     }
   } catch (error) {
-    if (controller.signal.aborted) throw new Error('Kinopoisk upstream timeout')
+    if (controller.signal.aborted) throw upstreamError('Kinopoisk upstream timeout', 'timeout')
     throw error
   } finally {
     clearTimeout(timeout)
@@ -140,22 +149,58 @@ export async function serveKinopoiskTop(resource, url, headers, ctx, cache) {
     logPublicCache('top', 'HIT', started)
     return new Response(cached.body, { headers })
   }
+  const key = cacheUrl.toString()
+  const deadline = Date.now() + LEASE_MS
+  let activeLease
+  while (true) {
+    for (const [leaseKey, lease] of inFlight) {
+      if (lease.expires <= Date.now()) inFlight.delete(leaseKey)
+    }
+    const current = inFlight.get(key)
+    if (!current) {
+      if (inFlight.size >= MAX_IN_FLIGHT) {
+        headers['X-Top-Cache'] = 'CAPACITY'
+        logPublicCache('top', 'CAPACITY', started, 503)
+        return new Response(JSON.stringify({ error: 'Kinopoisk top temporarily busy' }), {
+          status: 503,
+          headers
+        })
+      }
+      const lease = { expires: Date.now() + LEASE_MS }
+      inFlight.set(key, lease)
+      activeLease = lease
+      break
+    }
+    if (Date.now() >= deadline) {
+      headers['X-Top-Cache'] = 'WAIT_TIMEOUT'
+      logPublicCache('top', 'WAIT_TIMEOUT', started, 503)
+      return new Response(JSON.stringify({ error: 'Kinopoisk top temporarily busy' }), {
+        status: 503,
+        headers
+      })
+    }
+    await new Promise((resolve) => setTimeout(resolve, WAIT_MS))
+    const filled = await cacheMatch(cache, key)
+    if (filled) {
+      headers['X-Top-Cache'] = 'HIT'
+      logPublicCache('top', 'HIT', started)
+      return new Response(filled.body, { headers })
+    }
+  }
   try {
     const data = await requestKinopoiskTop(resource)
     const body = JSON.stringify(data)
-    ctx.waitUntil(
-      cache
-        .put(
-          cacheUrl.toString(),
-          new Response(body, {
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=' + resource.cacheTtl
-            }
-          })
-        )
-        .catch(() => console.error('kinopoisk_top_cache_error'))
-    )
+    await cache
+      .put(
+        key,
+        new Response(body, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=' + resource.cacheTtl
+          }
+        })
+      )
+      .catch(() => console.error('kinopoisk_top_cache_error'))
     headers['X-Top-Cache'] = 'MISS'
     logPublicCache('top', 'MISS', started)
     console.log(
@@ -169,10 +214,19 @@ export async function serveKinopoiskTop(resource, url, headers, ctx, cache) {
   } catch (error) {
     const timeout = /timeout/i.test(error.message)
     logPublicCache('top', 'MISS', started, timeout ? 504 : 502)
-    console.error(JSON.stringify({ event: 'kinopoisk_top_error', message: error.message }))
+    console.error(
+      JSON.stringify({
+        event: 'kinopoisk_top_error',
+        reason: error.reason || (error instanceof SyntaxError ? 'json' : 'connection'),
+        upstreamStatus: error.upstreamStatus,
+        durationMs: Date.now() - started
+      })
+    )
     return new Response(
       JSON.stringify({ error: timeout ? 'Upstream timeout' : 'Kinopoisk top unavailable' }),
       { status: timeout ? 504 : 502, headers }
     )
+  } finally {
+    if (inFlight.get(key) === activeLease) inFlight.delete(key)
   }
 }

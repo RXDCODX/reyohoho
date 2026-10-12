@@ -2,6 +2,37 @@ import { describe, expect, it, vi } from 'vitest'
 import { useCommentsData } from './useCommentsData'
 
 describe('useCommentsData', () => {
+  it('ignores late success from a superseded request even if transport ignores abort', async () => {
+    const pending = []
+    const state = useCommentsData({
+      movieId: () => '301',
+      fetchComments: () => new Promise((resolve) => pending.push(resolve))
+    })
+    const old = state.loadCommentsData()
+    const latest = state.loadCommentsData()
+    pending[1]([{ id: 2 }])
+    await latest
+    pending[0]([{ id: 1 }])
+    expect(await old).toBe(null)
+    expect(state.comments.value).toEqual([{ id: 2 }])
+  })
+
+  it('ignores late failures after cancellation without showing an error', async () => {
+    let reject
+    const state = useCommentsData({
+      movieId: () => '301',
+      fetchComments: () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    })
+    const pending = state.loadCommentsData()
+    state.cancelCommentsLoad()
+    reject(new Error('late offline'))
+    expect(await pending).toBe(null)
+    expect(state.commentsLoadError.value).toBe('')
+    expect(state.commentsLoading.value).toBe(false)
+  })
   it('loads comments and clears a previous error', async () => {
     const fetchComments = vi
       .fn()
@@ -22,9 +53,7 @@ describe('useCommentsData', () => {
 
   it('exposes loading while the request is pending', async () => {
     let resolveRequest
-    const fetchComments = vi.fn(
-      () => new Promise((resolve) => (resolveRequest = resolve))
-    )
+    const fetchComments = vi.fn(() => new Promise((resolve) => (resolveRequest = resolve)))
     const state = useCommentsData({ movieId: () => '301', fetchComments })
 
     const request = state.loadCommentsData()

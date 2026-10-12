@@ -30,12 +30,14 @@ describe('Kinobox content proxy routing', () => {
       { movie: { id: 301, title: { russian: 'Матрица' } } },
       { movie: { id: 302, title: { russian: 'Другой фильм' } } }
     ] } } })
-    const signal = new AbortController().signal
-    expect(await getRandomMovie({ signal })).toMatchObject({ kp_id: random === 0 ? 301 : 302 })
-    expect(mocks.get).toHaveBeenCalledWith('/api/kinopoisk/top', {
-      signal, timeout: 20000,
-      params: { type: 'movie', page: random === 0 ? 1 : 5, limit: 50 }
-    })
+    expect(await getRandomMovie()).toMatchObject({ kp_id: random === 0 ? 301 : 302 })
+    expect(mocks.get).toHaveBeenCalledWith(
+      '/api/kinopoisk/top',
+      expect.objectContaining({
+        timeout: 20000,
+        params: { type: 'movie', page: random === 0 ? 1 : 5, limit: 50 }
+      })
+    )
   })
   it('rejects an empty or unusable random pool rather than returning a broken watch link', async () => {
     const { getRandomMovie } = await import('./movies.kinobox')
@@ -96,12 +98,18 @@ describe('Kinobox content proxy routing', () => {
       '/api/movies/search/',
       expect.objectContaining({
         baseURL: 'https://api.reyhoho.fun',
-        signal,
         timeout: 20000,
         params: { query: 'Матрица' }
       })
     )
     expect(results[0]).toMatchObject({ id: 301, title: 'Матрица' })
+  })
+  it('passes cancellation signals through the Kinobox and DDBB player transports', async () => {
+    const { getPlayersRaw } = await import('./movies.kinobox')
+    const controller = new AbortController()
+    mocks.get.mockResolvedValue({ data: { data: [] } })
+    await getPlayersRaw(301, { signal: controller.signal })
+    expect(mocks.get.mock.calls[0][1].signal).toBe(controller.signal)
   })
 
   it('supports a separate search endpoint override', async () => {

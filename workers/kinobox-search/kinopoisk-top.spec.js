@@ -34,6 +34,62 @@ afterEach(() => {
 })
 
 describe('fixed Kinopoisk top proxy', () => {
+  it('classifies null JSON, absent bodies and oversized responses safely', async () => {
+    const logger = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cases = [
+      [() => new Response('null'), 'schema'],
+      [() => new Response(null), 'empty'],
+      [() => new Response('x'.repeat(1024 * 1024 + 1)), 'size']
+    ]
+    try {
+      for (const [response, reason] of cases) {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => response())
+        )
+        const cache = { match: vi.fn().mockResolvedValue(null), put: vi.fn() }
+        const result = await serveKinopoiskTop(
+          resolve(),
+          new URL('https://invalid.test/api/kinopoisk/top'),
+          { 'X-Worker-Version': 'invalid' },
+          {},
+          cache
+        )
+        expect(result.status).toBe(502)
+        expect(JSON.parse(logger.mock.calls.at(-1)[0]).reason).toBe(reason)
+        expect(cache.put).not.toHaveBeenCalled()
+      }
+    } finally {
+      logger.mockRestore()
+    }
+  })
+  it('keeps waiting cache reads within the Workers Free subrequest budget', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn(
+      (_, init) =>
+        new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new Error('Aborted')))
+        })
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const cache = { match: vi.fn().mockResolvedValue(null), put: vi.fn() }
+    const args = [
+      resolve(),
+      new URL('https://budget.test/api/kinopoisk/top'),
+      { 'X-Worker-Version': 'budget' },
+      {},
+      cache
+    ]
+    const first = serveKinopoiskTop(...args)
+    await vi.advanceTimersByTimeAsync(0)
+    const waiter = serveKinopoiskTop(...args)
+    await vi.advanceTimersByTimeAsync(14000)
+    // One initial read by each request; at most 48 more for the waiter.
+    expect(cache.match.mock.calls.length).toBeLessThanOrEqual(50)
+    await vi.advanceTimersByTimeAsync(20000)
+    await Promise.all([first, waiter])
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
   it('validates list type, bounded pagination and cache lifetime', () => {
     expect(resolve()).toMatchObject({
       params: { type: 'movie', page: '1', limit: '36' },
@@ -54,6 +110,41 @@ describe('fixed Kinopoisk top proxy', () => {
   })
   it('does not handle unrelated routes', () => {
     expect(resolveKinopoiskTop(new URL('https://proxy.test/api/movies/search/'))).toBe(null)
+  })
+  it('distinguishes GraphQL failures without logging provider messages or transport secrets', async () => {
+    const logger = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cache = { match: vi.fn().mockResolvedValue(null), put: vi.fn() }
+    const args = [
+      resolve(),
+      new URL('https://diagnostics.test/api/kinopoisk/top'),
+      { 'X-Worker-Version': 'diagnostics' },
+      {},
+      cache
+    ]
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              ...payload(),
+              errors: [{ message: 'secret-provider-message' }]
+            })
+          )
+        )
+      )
+      expect((await serveKinopoiskTop(...args)).status).toBe(502)
+      expect(JSON.parse(logger.mock.calls.at(-1)[0])).toMatchObject({
+        event: 'kinopoisk_top_error',
+        reason: 'graphql'
+      })
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('token=secret-transport-token')))
+      expect((await serveKinopoiskTop(...args)).status).toBe(502)
+      expect(JSON.stringify(logger.mock.calls)).not.toContain('secret')
+      expect(cache.put).not.toHaveBeenCalled()
+    } finally {
+      logger.mockRestore()
+    }
   })
   it('sends the fixed public operation without authentication or user fields', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload())))
@@ -143,5 +234,65 @@ describe('fixed Kinopoisk top proxy', () => {
     expect(response.status).toBe(502)
     expect(cache.put).not.toHaveBeenCalled()
     expect(waitUntil).not.toHaveBeenCalled()
+  })
+  it('deduplicates concurrent cold-key misses without sharing Response objects', async () => {
+    let releaseFetch
+    const fetcher = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          releaseFetch = () => resolve(new Response(JSON.stringify(payload())))
+        })
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const entries = new Map()
+    const cache = {
+      match: vi.fn(async (key) => entries.get(key)?.clone() || null),
+      put: vi.fn(async (key, response) => {
+        entries.set(key, response.clone())
+      })
+    }
+    const context = { waitUntil: (promise) => promise }
+    const args = [
+      resolve(),
+      new URL('https://proxy.test/api/kinopoisk/top'),
+      { 'X-Worker-Version': 'test' },
+      context,
+      cache
+    ]
+
+    const first = serveKinopoiskTop(...args)
+    const second = serveKinopoiskTop(...args)
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    releaseFetch()
+
+    const responses = await Promise.all([first, second])
+    expect(responses.map((response) => response.status)).toEqual([200, 200])
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(responses[1].headers.get('X-Top-Cache')).toBe('HIT')
+  })
+  it('releases the cold-key lease after upstream errors so a later request can retry', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(payload())))
+    vi.stubGlobal('fetch', fetcher)
+    const entries = new Map()
+    const cache = {
+      match: vi.fn(async (key) => entries.get(key)?.clone() || null),
+      put: vi.fn(async (key, response) => {
+        entries.set(key, response.clone())
+      })
+    }
+    const args = [
+      resolve(),
+      new URL('https://proxy.test/api/kinopoisk/top'),
+      { 'X-Worker-Version': 'test' },
+      { waitUntil: (promise) => promise },
+      cache
+    ]
+
+    expect((await serveKinopoiskTop(...args)).status).toBe(502)
+    expect((await serveKinopoiskTop(...args)).status).toBe(200)
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 })

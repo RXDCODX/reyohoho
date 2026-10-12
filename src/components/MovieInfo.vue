@@ -1,7 +1,7 @@
 <template>
   <div class="movie-info">
     <div class="content">
-      <div v-if="(infoLoading || !movieInfo) && !errorMessage" class="content-card">
+      <div v-if="contentLoading && !errorMessage" class="content-card">
         <div class="movie-skeleton">
           <div class="movie-skeleton__header">
             <div class="movie-skeleton__title"></div>
@@ -50,7 +50,7 @@
         />
       </div>
 
-      <div v-if="movieInfo && !infoLoading" class="content-card">
+      <div v-if="movieInfo && !contentLoading" class="content-card">
         <div class="content-header">
           <div
             v-if="movieInfo.logo_url"
@@ -1053,6 +1053,11 @@ const navbarStore = useNavbarStore()
 const trailerStore = useTrailerStore()
 const notificationRef = ref(null)
 const clientReady = ref(false)
+// Data and component chunks load in parallel. Do not render a collapsed card
+// between their completion: inserting the player would push the details down.
+const contentLoading = computed(() =>
+  infoLoading.value || !movieInfo.value || (clientReady.value && !moviePlayerComponent.value)
+)
 const DESCRIPTION_PREVIEW_LIMIT = 500
 
 const areTrailersActive = computed(() => trailerStore.areTrailersActive)
@@ -1573,9 +1578,14 @@ const handleNudityTimingsPopupOutsideClick = (event) => {
 
 onMounted(async () => {
   clientReady.value = true
-  moviePlayerComponent.value = (await import('@/components/PlayerComponent.vue')).default
-  movieRatingComponent.value = (await import('@/components/MovieRating.vue')).default
-  await fetchMovieInfo()
+  const movieInfoPromise = fetchMovieInfo()
+  const [playerModule, ratingModule] = await Promise.all([
+    import('@/components/PlayerComponent.vue'),
+    import('@/components/MovieRating.vue')
+  ])
+  moviePlayerComponent.value = playerModule.default
+  movieRatingComponent.value = ratingModule.default
+  await movieInfoPromise
   document.addEventListener('keydown', onKeyDown)
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('click', handleNudityPopupOutsideClick, true)

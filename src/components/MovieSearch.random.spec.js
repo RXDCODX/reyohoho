@@ -3,13 +3,15 @@ import { createTestingPinia } from '@pinia/testing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MovieSearch from './MovieSearch.vue'
 import RandomMovieModal from './RandomMovieModal.vue'
+import { MovieList } from './MovieList'
+import { useMainStore } from '@/store/main'
 
-const mocks = vi.hoisted(() => ({ random: vi.fn(), info: vi.fn(), top: vi.fn() }))
+const mocks = vi.hoisted(() => ({ random: vi.fn(), info: vi.fn(), top: vi.fn(), search: vi.fn() }))
 vi.mock('@/api/movies', () => ({
   getRandomMovie: mocks.random,
   getKpInfo: mocks.info,
   getMovies: mocks.top,
-  apiSearch: vi.fn(),
+  apiSearch: mocks.search,
   getKpIDfromIMDB: vi.fn(),
   getKpIDfromSHIKI: vi.fn()
 }))
@@ -32,11 +34,22 @@ describe('random film interaction', () => {
     mocks.info.mockResolvedValue({ description: 'Описание', film_length: '02:16:00' })
     vi.spyOn(console, 'error').mockImplementation(() => {})
     wrapper = shallowMount(MovieSearch, {
-      global: { plugins: [createTestingPinia({ createSpy: vi.fn })] }
+      attachTo: document.body,
+      global: {
+        plugins: [createTestingPinia({ createSpy: vi.fn })],
+        stubs: {
+          MovieList: {
+            props: ['moviesList', 'loading'],
+            template:
+              '<div><button v-for="movie in moviesList" :key="movie.kp_id" class="movie-card">{{ movie.title }}</button></div>'
+          }
+        }
+      }
     })
   })
   afterEach(() => {
     wrapper.unmount()
+    window.location.hash = ''
     vi.restoreAllMocks()
   })
   const modal = () => wrapper.findComponent(RandomMovieModal)
@@ -44,6 +57,57 @@ describe('random film interaction', () => {
     await wrapper.find('.random-button').trigger('click')
     await flushPromises()
   }
+  it('creates history on the first reset of a search link and then retains it', async () => {
+    wrapper.unmount()
+    window.location.hash = '#search=Result'
+    mocks.search.mockResolvedValue([])
+    const pinia = createTestingPinia({
+      createSpy: vi.fn,
+      initialState: { main: { history: [{ kp_id: '1', title: 'History' }] } }
+    })
+    wrapper = shallowMount(MovieSearch, { global: { plugins: [pinia] } })
+    await flushPromises()
+    expect(
+      wrapper.findAllComponents(MovieList).filter((list) => list.props('isHistory'))
+    ).toHaveLength(0)
+    await wrapper.find('.reset-button').trigger('click')
+    const historyList = wrapper.findAllComponents(MovieList).find((list) => list.props('isHistory'))
+    expect(historyList.props('moviesList')).toEqual([{ kp_id: '1', title: 'History' }])
+    const instance = historyList.vm
+    await wrapper.find('.search-input').setValue('again')
+    await wrapper.find('.reset-button').trigger('click')
+    expect(wrapper.findAllComponents(MovieList).find((list) => list.props('isHistory')).vm).toBe(
+      instance
+    )
+  })
+  it('moves focus to search results instead of the retained hidden history', async () => {
+    useMainStore().history = [{ kp_id: '1', title: 'History' }]
+    mocks.search.mockResolvedValue([{ id: 2, title: 'Result' }])
+    await flushPromises()
+    await wrapper.find('.search-input').setValue('Result')
+    await wrapper.find('.search-button').trigger('click')
+    await flushPromises()
+    await wrapper.find('.search-input').trigger('keydown.down')
+    expect(document.activeElement.textContent).toBe('Result')
+  })
+  it('preserves the history list while typing and restores current data on reset', async () => {
+    const store = useMainStore()
+    store.history = [
+      { kp_id: '1', title: 'First' },
+      { kp_id: '2', title: 'Second' }
+    ]
+    await flushPromises()
+    const list = wrapper.findComponent(MovieList)
+    const instance = list.vm
+    await wrapper.find('.search-input').setValue('a')
+    expect(wrapper.findComponent(MovieList).exists()).toBe(true)
+    expect(wrapper.findComponent(MovieList).isVisible()).toBe(false)
+    store.history = [store.history[1]]
+    await wrapper.find('.reset-button').trigger('click')
+    expect(wrapper.findComponent(MovieList).vm).toBe(instance)
+    expect(wrapper.findComponent(MovieList).isVisible()).toBe(true)
+    expect(wrapper.findComponent(MovieList).props('moviesList')).toEqual(store.history)
+  })
   it('loads and enriches a complete movie without legacy error text', async () => {
     await open()
     expect(modal().props('movie')).toMatchObject({
