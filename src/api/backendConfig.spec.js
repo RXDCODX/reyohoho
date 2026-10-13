@@ -11,7 +11,10 @@ describe('backend configuration without a remote config service', () => {
     vi.stubEnv('VITE_APP_API_URL', 'https://configured.example')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
   })
-  afterEach(() => {
+  afterEach(async () => {
+    // Endpoint changes reset Axios through a background dynamic import.
+    // Keep mocks and the environment alive until that work has completed.
+    await vi.dynamicImportSettled()
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
