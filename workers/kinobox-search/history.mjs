@@ -86,20 +86,53 @@ export async function serveHistory(request, env, origin) {
       : env.HISTORY_DB
     if (request.method === 'PATCH') {
       let metadata
-      try { metadata = await readMetadataPatch(request, id) }
-      catch { return reply({ error: 'Invalid metadata' }, 400) }
+      try {
+        metadata = await readMetadataPatch(request, id)
+      } catch {
+        return reply({ error: 'Invalid metadata' }, 400)
+      }
       const update = metadataUpdate('user_history', metadata, { userId, id })
-      if (update) await db.prepare(update.sql).bind(...update.params).run()
+      if (update)
+        await db
+          .prepare(update.sql)
+          .bind(...update.params)
+          .run()
       return reply({ ok: true })
     }
     if (request.method === 'GET') {
+      const cursor = new URL(request.url).searchParams.get('cursor')
+      let position
+      if (cursor) {
+        try {
+          if (cursor.length > 256) throw new Error()
+          position = JSON.parse(atob(cursor))
+          if (
+            !Array.isArray(position) ||
+            position.length !== 2 ||
+            typeof position[0] !== 'string' ||
+            position[0].length > 32 ||
+            !Number.isFinite(Date.parse(position[0])) ||
+            !/^[1-9]\d{0,11}$/.test(position[1])
+          )
+            throw new Error()
+        } catch {
+          return reply({ error: 'Invalid history cursor' }, 400)
+        }
+      }
       const { results } = await db
         .prepare(
-          'SELECT metadata FROM user_history WHERE user_id = ? AND deleted = 0 ORDER BY added_at DESC LIMIT 1000'
+          `SELECT metadata, added_at, kp_id FROM user_history WHERE user_id = ? AND deleted = 0
+           ${position ? 'AND (added_at < ? OR (added_at = ? AND kp_id < ?))' : ''}
+           ORDER BY added_at DESC, kp_id DESC LIMIT 1001`
         )
-        .bind(userId)
+        .bind(...(position ? [userId, position[0], position[0], position[1]] : [userId]))
         .all()
-      return reply({ history: results.map((row) => JSON.parse(row.metadata)) })
+      const page = results.slice(0, 1000)
+      const last = page[page.length - 1]
+      return reply({
+        history: page.map((row) => JSON.parse(row.metadata)),
+        nextCursor: results.length > 1000 ? btoa(JSON.stringify([last.added_at, last.kp_id])) : null
+      })
     }
     if (request.method === 'DELETE') {
       await db

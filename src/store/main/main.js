@@ -4,10 +4,12 @@ import { MAIN_STORE_NAME } from '../constants'
 import { beforeHydrateMainStore } from '../utils'
 import { resolvePosterByMovie } from '@/utils/mediaUtils'
 import { cardRatings } from '../../../migration/history-transfer/history-data.js'
+import { replaceLocalList } from '@/utils/localUserLists'
 
 export const useMainStore = defineStore(MAIN_STORE_NAME, {
   state: () => ({
     history: [],
+    historyOwner: 'guest',
     cloudHistoryAccount: null,
     isHistoryAllowed: true,
     isCommentsEnabled: true,
@@ -29,6 +31,7 @@ export const useMainStore = defineStore(MAIN_STORE_NAME, {
   actions: {
     setHistory(history) {
       this.history = history
+      replaceLocalList('history', history, this.historyOwner)
     },
     setIsMobile(isMobile) {
       this.isMobile = isMobile
@@ -81,20 +84,24 @@ export const useMainStore = defineStore(MAIN_STORE_NAME, {
         }
         this.history.unshift(movieWithDate)
       }
+      replaceLocalList('history', this.history, this.historyOwner)
     },
 
     removeFromHistory(kp_id) {
       this.history = this.history.filter((movie) => String(movie.kp_id) !== String(kp_id))
+      replaceLocalList('history', this.history, this.historyOwner)
     },
 
     cleanOldHistory() {
       const thirtyDaysAgo = new Date()
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
       this.history = this.history.filter((movie) => new Date(movie.addedAt) > thirtyDaysAgo)
+      replaceLocalList('history', this.history, this.historyOwner)
     },
 
     clearAllHistory() {
       this.history = []
+      replaceLocalList('history', [], this.historyOwner)
     },
 
     setHistoryAllowed(value) {
@@ -153,6 +160,7 @@ export const useMainStore = defineStore(MAIN_STORE_NAME, {
     key: MAIN_STORE_NAME,
     pick: [
       'history',
+      'historyOwner',
       'cloudHistoryAccount',
       'isHistoryAllowed',
       'isCommentsEnabled',

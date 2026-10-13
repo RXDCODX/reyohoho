@@ -27,6 +27,11 @@
   },
   "ratelimits": [
     {
+      "name": "PUBLIC_RATE_LIMITER",
+      "namespace_id": "610081004",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
       "name": "LOGIN_RATE_LIMITER",
       "namespace_id": "610081001",
       "simple": {

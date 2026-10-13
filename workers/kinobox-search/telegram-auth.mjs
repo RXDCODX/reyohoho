@@ -243,6 +243,14 @@ export async function serveTelegramAuth(request, env, origin) {
     }
     if (!validNonce(token)) return reply({ error: 'Invalid login token' }, 400)
     const pollHash = await sha256(token)
+    const pendingLogin = await db
+      .prepare('SELECT status,expires_at FROM tg_login WHERE poll_hash=?')
+      .bind(pollHash)
+      .first()
+    if (!pendingLogin || pendingLogin.status === 'consumed')
+      return reply({ error: 'Login token used or missing' }, 404)
+    if (pendingLogin.expires_at <= now) return reply({ error: 'Login token expired' }, 410)
+    if (pendingLogin.status === 'pending') return reply({ authenticated: false })
     const access = `rh1_${randomToken()}`
     const sessionHash = await sha256(access)
     // Consume once AND insert session atomically; a concurrent poll cannot mint a second session.
@@ -288,16 +296,27 @@ export async function cleanupAuth(env) {
   if (!env.HISTORY_DB) return
   const db = primaryDb(env)
   const now = Math.floor(Date.now() / 1000)
-  await db.batch([
-    db
-      .prepare(
-        'DELETE FROM tg_login WHERE poll_hash IN (SELECT poll_hash FROM tg_login WHERE expires_at < ? LIMIT 1000)'
-      )
-      .bind(now),
-    db
-      .prepare(
-        'DELETE FROM tg_sessions WHERE token_hash IN (SELECT token_hash FROM tg_sessions WHERE expires_at < ? LIMIT 1000)'
-      )
-      .bind(now)
-  ])
+  let removed = 0
+  let batches = 0
+  for (; batches < 10; batches++) {
+    const result = await db.batch([
+      db
+        .prepare(
+          'DELETE FROM tg_login WHERE poll_hash IN (SELECT poll_hash FROM tg_login WHERE expires_at < ? LIMIT 1000)'
+        )
+        .bind(now),
+      db
+        .prepare(
+          'DELETE FROM tg_sessions WHERE token_hash IN (SELECT token_hash FROM tg_sessions WHERE expires_at < ? LIMIT 1000)'
+        )
+        .bind(now)
+    ])
+    const changes = result.map((entry) => Number(entry.meta?.changes || 0))
+    removed += changes.reduce((sum, count) => sum + count, 0)
+    if (changes.every((count) => count < 1000)) {
+      batches++
+      break
+    }
+  }
+  console.log(JSON.stringify({ event: 'auth_cleanup', batches, removed, capped: batches === 10 }))
 }

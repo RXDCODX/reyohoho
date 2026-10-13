@@ -36,7 +36,9 @@ export default defineConfig(({ mode }) => {
           clientsClaim: true,
           skipWaiting: true,
           maximumFileSizeToCacheInBytes: 3000000,
-          globPatterns: ['**/*.{js,css,webp,png,svg,ico,woff2,json,webmanifest}']
+          globPatterns: ['index.html', '**/*.{js,css,webp,png,svg,ico,woff2,json,webmanifest}'],
+          navigateFallback: `${base}index.html`,
+          navigateFallbackDenylist: [/^\/api\//, /auth-success/, /history-transfer/]
         },
         build: {
           rollupOptions: {

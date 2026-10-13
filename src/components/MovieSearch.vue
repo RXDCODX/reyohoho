@@ -33,7 +33,7 @@
             :class="{ 'wrong-layout': showLayoutWarning }"
             :inputmode="searchType === 'title' ? 'text' : 'numeric'"
             @keydown.enter.prevent="search"
-            @keydown.tab.prevent="handleTabKey"
+          @keydown.tab="handleTabKey"
             @keydown.down.prevent="focusFirstMovieCard"
             @input="handleInput"
           />
@@ -184,6 +184,7 @@ import { createLatestRequestGuard } from '@/utils/latestRequest'
 import { normalizeRandomMovie } from '@/utils/randomMovie'
 import { isRequestCanceled } from '@/utils/requestCancellation'
 import { logoutAndRedirect } from '@/utils/authSession'
+import { usePublicPageState } from '@/composables/usePublicPageState'
 
 const mainStore = useMainStore()
 const authStore = useAuthStore()
@@ -208,6 +209,13 @@ const topMoviesLoading = ref(false)
 const topMoviesLoadingMore = ref(false)
 const topMoviesPage = ref(1)
 const topMoviesHasMore = ref(true)
+const publicPage = usePublicPageState('home')
+const initialPage = publicPage.read()
+if (initialPage && mainStore.contentApiProvider !== 'local') {
+  topMovies.value = initialPage.movies
+  topMoviesPage.value = initialPage.page
+  topMoviesHasMore.value = initialPage.hasMore
+}
 const homeTopSentinel = ref(null)
 const HOME_TOP_PAGE_SIZE = 24
 let homeTopObserver = null
@@ -380,7 +388,10 @@ const setupHomeTopInfiniteScroll = async () => {
   homeTopObserver.observe(homeTopSentinel.value)
 }
 
-onServerPrefetch(loadHomeTopMovies)
+onServerPrefetch(async () => {
+  await loadHomeTopMovies()
+  publicPage.save({ movies: topMovies.value, page: topMoviesPage.value, hasMore: topMoviesHasMore.value })
+})
 
 watch(canLoadMoreTopMovies, (canLoad) => {
   if (canLoad) {
@@ -457,8 +468,9 @@ const handleInput = (event) => {
   }
 }
 
-const handleTabKey = () => {
-  if (showLayoutWarning.value) {
+const handleTabKey = (event) => {
+  if (showLayoutWarning.value && !event.shiftKey) {
+    event.preventDefault()
     searchTerm.value = convertLayout(searchTerm.value)
     showLayoutWarning.value = false
   }

@@ -14,7 +14,14 @@ const busy = (key) => {
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-export async function serveKinoboxContent(resource, url, headers, cache, requestUpstream) {
+export async function serveKinoboxContent(
+  resource,
+  url,
+  headers,
+  cache,
+  requestUpstream,
+  budget = async () => null
+) {
   const started = Date.now()
   const key = getKinoboxCacheUrl(url.origin, resource, headers['X-Worker-Version'])
   const staleKey = key.replace('/__kinobox-cache?', '/__kinobox-stale?')
@@ -36,8 +43,10 @@ export async function serveKinoboxContent(resource, url, headers, cache, request
   const cached = await cacheMatch(cache, key)
   if (cached) return respond(cached.body, 200, 'HIT')
   const stale = resource.kind === 'movie' ? await cacheMatch(cache, staleKey) : undefined
-  if (await cacheMatch(cache, retryKey)) {
-    return stale ? respond(stale.body, 200, 'STALE') : unavailable()
+  const retry = await cacheMatch(cache, retryKey)
+  if (retry) {
+    const invalid = (await retry.text()) === 'invalid'
+    return stale && !invalid ? respond(stale.body, 200, 'STALE') : unavailable()
   }
   // Wait with this request's own I/O, rather than sharing another request's promise.
   for (let attempt = 0; busy(key) && attempt < 20; attempt++) {
@@ -58,6 +67,8 @@ export async function serveKinoboxContent(resource, url, headers, cache, request
       : respond(JSON.stringify({ error }), status, 'MISS', true)
   }
   try {
+    const rejected = await budget()
+    if (rejected) return stale ? respond(stale.body, 200, 'STALE') : rejected
     const response = await requestUpstream({
       path: resource.path,
       params: {
@@ -86,18 +97,26 @@ export async function serveKinoboxContent(resource, url, headers, cache, request
         response.status === 404 ? 404 : 502,
         'MISS'
       )
-    if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity')
-      return respond(JSON.stringify({ error: 'Unexpected upstream encoding' }), 502, 'MISS')
+    if (
+      response.headers['content-encoding'] &&
+      response.headers['content-encoding'] !== 'identity'
+    ) {
+      await cachePut(cache, retryKey, 'invalid', RETRY_TTL)
+      return respond(JSON.stringify({ error: 'Unexpected upstream encoding' }), 502, 'MISS', true)
+    }
     let data
     try {
       data = JSON.parse(response.body.toString('utf8'))
     } catch {
-      return respond(JSON.stringify({ error: 'Invalid upstream JSON' }), 502, 'MISS')
+      await cachePut(cache, retryKey, 'invalid', RETRY_TTL)
+      return respond(JSON.stringify({ error: 'Invalid upstream JSON' }), 502, 'MISS', true)
     }
     if (resource.kind === 'movie' && data?.data?.isSuccess === false)
       return respond(JSON.stringify(data), 404, 'MISS')
-    if (!isKinoboxResponseValid(resource.kind, data))
-      return respond(JSON.stringify({ error: 'Unexpected upstream schema' }), 502, 'MISS')
+    if (!isKinoboxResponseValid(resource.kind, data)) {
+      await cachePut(cache, retryKey, 'invalid', RETRY_TTL)
+      return respond(JSON.stringify({ error: 'Unexpected upstream schema' }), 502, 'MISS', true)
+    }
     const body = JSON.stringify(data)
     // Finish the cache write before releasing the lease to avoid another cold miss.
     await Promise.all([

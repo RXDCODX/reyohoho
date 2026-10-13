@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/store/auth'
+import { reactive } from 'vue'
 import { useMainStore } from '@/store/main'
 import { normalizeHistory } from '../../migration/history-transfer/history-data.js'
 import { enrichListMetadata } from './listMetadata'
@@ -45,22 +46,39 @@ export async function historyRequest(path = '', method = 'GET', body) {
   return data
 }
 
+export async function getCloudHistory() {
+  const token = useAuthStore().token
+  const items = []
+  const seen = new Set()
+  let cursor = null
+  do {
+    if (useAuthStore().token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
+    const page = await historyRequest(cursor ? `?cursor=${encodeURIComponent(cursor)}` : '')
+    if (!Array.isArray(page.history)) throw new Error('Неполный ответ облачной истории')
+    items.push(...page.history)
+    if (items.length > 5000) throw new Error('Превышен лимит облачной истории')
+    cursor = page.nextCursor || null
+    if (cursor && seen.has(cursor)) throw new Error('Ошибка пагинации истории')
+    if (cursor) seen.add(cursor)
+  } while (cursor)
+  return normalizeHistory(items, 5000)
+}
+
 export async function importCloudHistory(items) {
   const token = useAuthStore().token
-  const normalized = normalizeHistory(
-    await enrichListMetadata(normalizeHistory(items), {
-      isCurrent: () => useAuthStore().token === token
-    })
-  )
+  const normalized = normalizeHistory(items, 5000)
   for (let i = 0; i < normalized.length; i += 40) {
     if (useAuthStore().token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
     await historyRequest('/import', 'POST', { history: normalized.slice(i, i + 40) })
   }
   if (useAuthStore().token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
-  return normalizeHistory(
-    await enrichListMetadata(normalizeHistory((await historyRequest()).history), {
-      isCurrent: () => useAuthStore().token === token,
-      persist: (metadata) => historyRequest(`/${metadata.kp_id}`, 'PATCH', { metadata })
-    })
-  )
+  const cards = reactive(await getCloudHistory())
+  void enrichListMetadata(cards, {
+    isCurrent: () => useAuthStore().token === token,
+    onItem: (item, index) => {
+      cards[index] = item
+    },
+    persist: (metadata) => historyRequest(`/${metadata.kp_id}`, 'PATCH', { metadata })
+  }).catch(() => {})
+  return cards
 }

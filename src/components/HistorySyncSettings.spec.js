@@ -5,7 +5,7 @@ import HistorySyncSettings from './HistorySyncSettings.vue'
 import { useMainStore } from '@/store/main'
 import { useAuthStore } from '@/store/auth'
 
-const mocks = vi.hoisted(() => ({ transfer: vi.fn(), importHistory: vi.fn(), request: vi.fn() }))
+const mocks = vi.hoisted(() => ({ transfer: vi.fn(), importHistory: vi.fn(), request: vi.fn(), getHistory: vi.fn() }))
 vi.mock('@/utils/historyTransfer', () => ({
   TRANSFER_URL: 'https://dav2010id.github.io/reyohoho-history-transfer/',
   startHistoryTransfer: mocks.transfer
@@ -14,10 +14,23 @@ vi.mock('@/api/cloudHistory', () => ({
   cloudHistoryAvailable: true,
   isCloudHistoryEnabled: () => useAuthStore().isWorkerSession,
   importCloudHistory: mocks.importHistory,
+  getCloudHistory: mocks.getHistory,
   historyRequest: mocks.request
 }))
 
 describe('history transfer confirmation', () => {
+  it('loads the complete cloud history instead of its first page', async () => {
+    const auth = useAuthStore()
+    auth.setToken('rh1_' + 'x'.repeat(43))
+    auth.setUser({ id: 1 })
+    mocks.getHistory.mockResolvedValue(Array.from({ length: 1500 }, (_, i) => ({ kp_id: String(i + 1) })))
+    const wrapper = mount(HistorySyncSettings)
+    await button(wrapper, 'Загрузить из облака').trigger('click')
+    await flushPromises()
+    expect(main.history).toHaveLength(1500)
+    expect(mocks.request).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
   let main
   beforeEach(() => {
     vi.clearAllMocks()

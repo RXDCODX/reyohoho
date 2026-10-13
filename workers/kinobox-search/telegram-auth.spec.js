@@ -46,6 +46,37 @@ afterEach(() => {
 })
 
 describe('Telegram Worker auth', () => {
+  it('drains an expired backlog beyond one batch while preserving valid challenges and sessions', async () => {
+    const db = testDatabase()
+    const future = Math.floor(Date.now() / 1000) + 86400
+    db.sqlite.prepare('INSERT INTO tg_users VALUES (?,?)').run('123', 'Test')
+    const login = db.sqlite.prepare(
+      'INSERT INTO tg_login(poll_hash,start_hash,code,expires_at) VALUES (?,?,?,?)'
+    )
+    const session = db.sqlite.prepare('INSERT INTO tg_sessions VALUES (?,?,?,?)')
+    db.sqlite.exec('BEGIN')
+    for (let i = 0; i < 2501; i++) {
+      login.run(`poll${i}`, `start${i}`, '123456', 0)
+      session.run(`session${i}`, '123', 0, 0)
+    }
+    login.run('valid-poll', 'valid-start', '123456', future)
+    session.run('valid-session', '123', future, 0)
+    db.sqlite.exec('COMMIT')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await cleanupAuth(envFor(db))
+    expect(db.sqlite.prepare('SELECT poll_hash FROM tg_login').all()).toEqual([
+      { poll_hash: 'valid-poll' }
+    ])
+    expect(db.sqlite.prepare('SELECT token_hash FROM tg_sessions').all()).toEqual([
+      { token_hash: 'valid-session' }
+    ])
+    expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+      batches: 3,
+      removed: 5002,
+      capped: false
+    })
+    db.sqlite.close()
+  })
   it('requires configuration, JSON, rate limits, method and webhook secret', async () => {
     const db = testDatabase()
     const env = envFor(db)

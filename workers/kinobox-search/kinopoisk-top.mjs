@@ -1,4 +1,4 @@
-import { logPublicCache, cacheMatch } from './public-cache.mjs'
+import { logPublicCache, cacheMatch, cachePut } from './public-cache.mjs'
 import { KINOPOISK_TOP_QUERY } from './kinopoisk-top-query.mjs'
 
 const ENDPOINT = 'https://graphql.kinopoisk.ru/graphql/?operationName=MovieDesktopListPage'
@@ -8,7 +8,7 @@ const inFlight = new Map()
 const LEASE_MS = 20_000
 // At most 40 polling reads per 20-second lease, leaving room for the
 // initial cache read, upstream fetch and write on Workers Free (50 calls).
-const WAIT_MS = 500
+const WAIT_MS = 1000
 const MAX_IN_FLIGHT = 256
 const upstreamError = (message, reason, upstreamStatus) =>
   Object.assign(new Error(message), { reason, upstreamStatus })
@@ -133,7 +133,14 @@ export async function requestKinopoiskTop(resource, fetchImpl = fetch, timeoutMs
   }
 }
 
-export async function serveKinopoiskTop(resource, url, headers, ctx, cache) {
+export async function serveKinopoiskTop(
+  resource,
+  url,
+  headers,
+  ctx,
+  cache,
+  budget = async () => null
+) {
   const started = Date.now()
   delete headers['X-Search-Transport']
   delete headers['X-Kinobox-Transport']
@@ -150,6 +157,13 @@ export async function serveKinopoiskTop(resource, url, headers, ctx, cache) {
     return new Response(cached.body, { headers })
   }
   const key = cacheUrl.toString()
+  const retryKey = key.replace('/__kinopoisk-top-cache', '/__kinopoisk-top-retry')
+  const backoff = () =>
+    new Response(JSON.stringify({ error: 'Kinopoisk top temporarily unavailable' }), {
+      status: 503,
+      headers: { ...headers, 'X-Top-Cache': 'BACKOFF', 'Retry-After': '30' }
+    })
+  if (await cacheMatch(cache, retryKey)) return backoff()
   const deadline = Date.now() + LEASE_MS
   let activeLease
   while (true) {
@@ -180,6 +194,7 @@ export async function serveKinopoiskTop(resource, url, headers, ctx, cache) {
       })
     }
     await new Promise((resolve) => setTimeout(resolve, WAIT_MS))
+    if (await cacheMatch(cache, retryKey)) return backoff()
     const filled = await cacheMatch(cache, key)
     if (filled) {
       headers['X-Top-Cache'] = 'HIT'
@@ -188,19 +203,11 @@ export async function serveKinopoiskTop(resource, url, headers, ctx, cache) {
     }
   }
   try {
+    const rejected = await budget()
+    if (rejected) return rejected
     const data = await requestKinopoiskTop(resource)
     const body = JSON.stringify(data)
-    await cache
-      .put(
-        key,
-        new Response(body, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=' + resource.cacheTtl
-          }
-        })
-      )
-      .catch(() => console.error('kinopoisk_top_cache_error'))
+    await cachePut(cache, key, body, resource.cacheTtl)
     headers['X-Top-Cache'] = 'MISS'
     logPublicCache('top', 'MISS', started)
     console.log(
@@ -212,6 +219,8 @@ export async function serveKinopoiskTop(resource, url, headers, ctx, cache) {
     )
     return new Response(body, { headers })
   } catch (error) {
+    await cachePut(cache, retryKey, '{}', 30)
+    headers['Retry-After'] = '30'
     const timeout = /timeout/i.test(error.message)
     logPublicCache('top', 'MISS', started, timeout ? 504 : 502)
     console.error(

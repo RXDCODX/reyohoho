@@ -130,6 +130,7 @@ describe('MovieInfo SEO', () => {
     authMock.isWorkerSession = false
     mainMock.contentApiProvider = 'kinobox'
     mainMock.isMobile = false
+    mainMock.isHistoryAllowed = false
     useHeadMock.mockReset()
     getKpInfoMock.mockReset()
     getKpInfoMock.mockResolvedValue({
@@ -224,6 +225,38 @@ describe('MovieInfo SEO', () => {
       expect(player.props('movieInfo').lists.isFavorite).toBe(false)
       expect(wrapper.find('iframe').element).toBe(iframe)
       expect(getKpInfoMock).toHaveBeenCalledTimes(fetchCount)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('renders details and player while a history write is pending and ignores its result after account change', async () => {
+    authMock.token = 'account-A'
+    mainMock.isHistoryAllowed = true
+    const { addToList, getMovieListStatus } = await import('@/api/user')
+    let finishWrite
+    addToList.mockReset().mockImplementation(() => new Promise((resolve) => { finishWrite = resolve }))
+    getMovieListStatus.mockClear()
+    const MovieInfo = (await import('./MovieInfo.vue')).default
+    const wrapper = shallowMount(MovieInfo, { global: {
+      plugins: [createTestingPinia({ createSpy: vi.fn })],
+      stubs: {
+        PlayerComponent: { name: 'PlayerComponent', props: ['movieInfo'], template: '<iframe src="about:blank" />' },
+        MovieRating: true, MovieList: true, Notification: true,
+        TrailerCarousel: true, Comments: true, RouterLink: true
+      }
+    } })
+    try {
+      await vi.waitFor(() => expect(wrapper.find('iframe').exists()).toBe(true))
+      expect(wrapper.find('#movie-details').exists()).toBe(true)
+      expect(wrapper.find('.movie-skeleton').exists()).toBe(false)
+      expect(addToList).toHaveBeenCalledWith('123', 'history', expect.any(Object))
+      const statusReads = getMovieListStatus.mock.calls.length
+      authMock.token = 'account-B'
+      finishWrite({})
+      await flushPromises()
+      expect(getMovieListStatus).toHaveBeenCalledTimes(statusReads)
+      expect(wrapper.getComponent({ name: 'PlayerComponent' }).props('movieInfo').lists.isHistory).not.toBe(true)
     } finally {
       wrapper.unmount()
     }

@@ -12,6 +12,19 @@ const toOrigin = (value) => {
   }
 }
 
+// Reject executable content before a provider URL can reach an iframe.
+export const getSafePlayerUrl = (value, currentOrigin = typeof window !== 'undefined' ? window.location.origin : '') => {
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    const url = new URL(value, currentOrigin || undefined)
+    if (url.username || url.password) return null
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) return null
+    return value.trim()
+  } catch {
+    return null
+  }
+}
+
 export const getReviewedPlayerOrigins = (env = import.meta.env) =>
   new Set([
     ...DEFAULT_REVIEWED_ORIGINS,

@@ -11,6 +11,19 @@ import {
 describe('local user lists mirror', () => {
   beforeEach(() => localStorage.clear())
 
+  it('keeps guest, worker accounts and legacy accounts isolated while offline', () => {
+    addLocalListItem('favorite', 1, { title: 'Guest' })
+    addLocalListItem('favorite', 2, { title: 'Worker A' }, 'worker:11')
+    addLocalListItem('favorite', 3, { title: 'Worker B' }, 'worker:12')
+    addLocalListItem('favorite', 4, { title: 'Legacy A' }, 'legacy:11')
+    clearLocalList('favorite', 'worker:11')
+    expect(getLocalList('favorite', 'worker:11')).toEqual([])
+    expect(getLocalList('favorite', 'worker:12').map((x) => x.kp_id)).toEqual(['3'])
+    expect(getLocalList('favorite', 'legacy:11').map((x) => x.kp_id)).toEqual(['4'])
+    expect(getLocalList('favorite').map((x) => x.kp_id)).toEqual(['1'])
+    expect(getLocalList('favorite', 'worker:13')).toEqual([])
+  })
+
   it('stores metadata and mirrors add/remove/replace operations', () => {
     addLocalListItem('favorite', 301, {
       name_ru: 'Матрица',

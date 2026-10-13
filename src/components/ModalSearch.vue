@@ -10,7 +10,7 @@
           class="search-input"
           :class="{ 'wrong-layout': showLayoutWarning }"
           @keydown.enter="search"
-          @keydown.tab.prevent="handleTabKey"
+          @keydown.tab="handleTabKey"
           @keydown.down.prevent="focusFirstMovieCard"
           @input="handleInput"
         />
@@ -215,8 +215,9 @@ const handleInput = (event) => {
   }
 }
 
-const handleTabKey = () => {
-  if (showLayoutWarning.value) {
+const handleTabKey = (event) => {
+  if (showLayoutWarning.value && !event.shiftKey) {
+    event.preventDefault()
     searchTerm.value = convertLayout(searchTerm.value)
     showLayoutWarning.value = false
   }

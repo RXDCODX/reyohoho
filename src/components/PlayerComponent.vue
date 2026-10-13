@@ -34,9 +34,9 @@
     >
       <div class="iframe-wrapper" :style="!theaterMode ? iframeWrapperStyle : {}">
         <iframe
-          v-show="!iframeLoading && selectedPlayerInternal?.iframe"
+          v-show="!iframeLoading && safeIframeUrl"
           ref="playerIframe"
-          :src="selectedPlayerInternal?.iframe"
+          :src="safeIframeUrl || undefined"
           :title="movieInfo?.title ? `Плеер для ${movieInfo.title}` : 'Видео-плеер'"
           frameborder="0"
           allowfullscreen
@@ -565,7 +565,7 @@ import { OBSWebSocket } from '@/utils/obsWebSocket'
 import { debugLog } from '@/utils/logger'
 import { getProviderDisplayName } from '@/utils/playerUtils'
 import { trackAnalyticsEvent } from '@/utils/analytics'
-import { assessPlayerIframe, getPersistablePlayerKey } from '@/utils/playerSecurity'
+import { assessPlayerIframe, getPersistablePlayerKey, getSafePlayerUrl } from '@/utils/playerSecurity'
 import {
   applyOverlayButtonHoverStyle,
   applyOverlayProgressBackgroundStyle,
@@ -671,6 +671,7 @@ const {
   onSelectedPlayerChange: (player) => emit('update:selectedPlayer', player)
 })
 
+const safeIframeUrl = computed(() => getSafePlayerUrl(selectedPlayerInternal.value?.iframe))
 const activeTooltip = ref(null)
 const tooltipHovered = ref(false)
 let hideTimeout = null

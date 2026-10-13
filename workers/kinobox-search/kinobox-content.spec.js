@@ -15,9 +15,9 @@ const upstream = (status = 200, data = { data: { movie: { id: 301 } } }) => ({
   body: Buffer.from(JSON.stringify(data)),
   tls: { selectedAlpn: 'h2', version: 'TLS1.3' }
 })
-const serve = (load, path = '/api/movies/301', h = headers) => {
+const serve = (load, path = '/api/movies/301', h = headers, budget) => {
   const url = new URL(path, 'https://api.reyhoho.fun')
-  return serveKinoboxContent(resolveKinoboxResource(url), url, h, cache, load)
+  return serveKinoboxContent(resolveKinoboxResource(url), url, h, cache, load, budget)
 }
 beforeEach(() => {
   time = 0
@@ -37,6 +37,24 @@ beforeEach(() => {
   }
 })
 describe('Kinobox public caching', () => {
+  it('charges cold upstream attempts, keeps hits free and denies without fetching', async () => {
+    const load = vi.fn(async () => upstream())
+    const budget = vi.fn(async () => null)
+    expect((await serve(load, undefined, headers, budget)).status).toBe(200)
+    expect((await serve(load, undefined, headers, budget)).status).toBe(200)
+    expect(budget).toHaveBeenCalledTimes(1)
+    const denied = vi.fn(async () => new Response('{}', { status: 429 }))
+    expect((await serve(load, '/api/movies/302', headers, denied)).status).toBe(429)
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+  it('never serves stale data during invalid-schema cooldown', async () => {
+    const load = vi.fn().mockResolvedValueOnce(upstream()).mockResolvedValue(upstream(200, {}))
+    await serve(load)
+    time = 21600 * 1000 + 1
+    expect((await serve(load)).status).toBe(502)
+    expect((await serve(load)).status).toBe(503)
+    expect(load).toHaveBeenCalledTimes(2)
+  })
   it('serves MISS then HIT with request-specific CORS and no public client cache', async () => {
     const load = vi.fn(async () => upstream())
     expect((await serve(load)).headers.get('X-Kinobox-Cache')).toBe('MISS')

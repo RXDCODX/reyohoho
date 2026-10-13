@@ -10,6 +10,7 @@ import { usePlayerStore } from '@/store/player'
 import { trackAnalyticsEvent } from '@/utils/analytics'
 import { computed, ref } from 'vue'
 import { KINOBD_ENABLED } from '@/api/providerAvailability'
+import { getSafePlayerUrl } from '@/utils/playerSecurity'
 
 const normalizePlayerKey = (key) => String(key || '').toUpperCase()
 const KINOBOX_LOW_PRIORITY_PROVIDERS = new Set(['YOUTUBE'])
@@ -82,7 +83,9 @@ export function usePlayerSources({ props, getProviderDisplayName, onSelectedPlay
         key: normalizePlayerKey(key),
         ...value
       }
-      const iframe = String(player?.iframe || '').trim()
+      const iframe = getSafePlayerUrl(player?.iframe)
+      if (!iframe) continue
+      player.iframe = iframe
       const identity = iframe || normalizePlayerKey(player.key)
       if (seenPlayers.has(identity)) continue
       seenPlayers.add(identity)

@@ -1418,9 +1418,13 @@ const fetchMovieInfo = async (updateHistory = true) => {
         mainStore.addToHistory({ ...movieToSave })
         const historyToken = authStore.token
         const historyMovie = movieInfo.value
-        try {
+        void (async () => {
+          try {
           await addToList(movieToSave.kp_id, USER_LIST_TYPES_ENUM.HISTORY, historyMovie)
-          await loadStatus()
+          if (!controller.signal.aborted && requestedKpId === kp_id.value &&
+            authStore.token === historyToken && movieInfo.value === historyMovie) {
+            await loadStatus()
+          }
           if (!controller.signal.aborted && requestedKpId === kp_id.value &&
             authStore.token === historyToken && movieInfo.value === historyMovie) {
             movieInfo.value.lists = { ...movieInfo.value.lists, isHistory: true }
@@ -1428,6 +1432,7 @@ const fetchMovieInfo = async (updateHistory = true) => {
         } catch (error) {
           console.error('Ошибка при добавлении в историю:', error)
         }
+        })()
       } else {
         mainStore.addToHistory({ ...movieToSave })
       }

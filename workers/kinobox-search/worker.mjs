@@ -6,8 +6,9 @@ import { resolveKinopoiskTop, serveKinopoiskTop } from './kinopoisk-top.mjs'
 import { serveHistory } from './history.mjs'
 import { serveTelegramAuth, cleanupAuth } from './telegram-auth.mjs'
 import { serveAccount } from './account.mjs'
+import { publicUpstreamBudget } from './public-budget.mjs'
 
-const VERSION = 'kinobox-content-tg-d1-2026-10-08'
+const VERSION = 'kinobox-content-audit-2026-10-13'
 const ALLOWED = new Set([
   'https://reyhoho.fun',
   'https://www.reyhoho.fun',
@@ -75,10 +76,16 @@ export default {
     const url = new URL(request.url)
     const resource = resolveKinopoiskTop(url) || resolveKinoboxResource(url)
     if (resource.error) return reply({ error: resource.error }, resource.status)
+    const budget = publicUpstreamBudget(request, env, headers)
     if (resource.kind === 'top')
-      return serveKinopoiskTop(resource, url, headers, ctx, caches.default)
-    return serveKinoboxContent(resource, url, headers, caches.default, (options) =>
-      requestKinoboxHttp2(options, openTransport)
+      return serveKinopoiskTop(resource, url, headers, ctx, caches.default, budget)
+    return serveKinoboxContent(
+      resource,
+      url,
+      headers,
+      caches.default,
+      (options) => requestKinoboxHttp2(options, openTransport),
+      budget
     )
   }
 }

@@ -32,6 +32,16 @@ vi.mock('@/api/providerRegistry', () => ({
 import { apiSearch } from './movies'
 
 describe('movies request cancellation', () => {
+  it('reports a provider outage instead of returning an empty successful search', async () => {
+    const unavailable = new Error('provider unavailable')
+    providerMocks.kinoboxSearch.mockRejectedValue(unavailable)
+    await expect(apiSearch('matrix')).rejects.toBe(unavailable)
+  })
+
+  it('returns an empty list when the provider successfully finds no matches', async () => {
+    providerMocks.kinoboxSearch.mockResolvedValue([])
+    await expect(apiSearch('no matches')).resolves.toEqual([])
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     providerMocks.loadProvider.mockImplementation(async (provider) => {

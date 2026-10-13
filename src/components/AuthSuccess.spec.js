@@ -4,19 +4,68 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AuthSuccess from './AuthSuccess.vue'
 import { useAuthStore } from '@/store/auth'
 import { useMainStore } from '@/store/main'
+import { readPendingSync } from '@/utils/pendingAccountSync'
+import { replaceLocalList } from '@/utils/localUserLists'
 
 const mocks = vi.hoisted(() => ({
   getUser: vi.fn(), getMyLists: vi.fn(), addToList: vi.fn(), importHistory: vi.fn(),
-  replace: vi.fn()
+  replace: vi.fn(), getKpInfo: vi.fn()
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ replace: mocks.replace }) }))
 vi.mock('@/api/user', () => ({
   getUser: mocks.getUser, getMyLists: mocks.getMyLists, addToList: mocks.addToList
 }))
 vi.mock('@/api/cloudHistory', () => ({ importCloudHistory: mocks.importHistory }))
-vi.mock('@/api/movies', () => ({ getKpInfo: vi.fn() }))
+vi.mock('@/api/movies', () => ({ getKpInfo: mocks.getKpInfo }))
 
 describe('sign-in messages', () => {
+  it('does not upload legacy history into a new account after a delayed metadata read', async () => {
+    useAuthStore().setToken('legacy-A')
+    let resolveMetadata
+    mocks.getKpInfo.mockReturnValue(new Promise((resolve) => { resolveMetadata = resolve }))
+    const wrapper = create()
+    await flushPromises()
+    expect(mocks.getKpInfo).toHaveBeenCalledWith('301')
+    useAuthStore().setToken('legacy-B')
+    useAuthStore().setUser({ id: 2 })
+    resolveMetadata({ name_ru: 'Matrix', poster_url: '/poster.jpg' })
+    await flushPromises()
+    expect(mocks.addToList).not.toHaveBeenCalled()
+    expect(readPendingSync('legacy:1').history.map((item) => item.kp_id)).toEqual(['301'])
+    expect(useAuthStore().user.id).toBe(2)
+    wrapper.unmount()
+  })
+  it('keeps failed list items across a remount and retries only unconfirmed writes', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    replaceLocalList('favorite', [{ kp_id: '301' }, { kp_id: '302' }], 'guest')
+    mocks.addToList.mockImplementation(async (id) => {
+      if (id === '302') throw new Error('offline')
+    })
+    const first = create()
+    await flushPromises()
+    expect(readPendingSync('worker:1').lists.favorite.map((item) => item.kp_id)).toEqual(['302'])
+    first.unmount()
+    mocks.addToList.mockClear()
+    mocks.addToList.mockResolvedValue({ ok: true })
+    const second = create()
+    await flushPromises()
+    expect(mocks.addToList).toHaveBeenCalledTimes(1)
+    expect(mocks.addToList.mock.calls[0][0]).toBe('302')
+    expect(readPendingSync('worker:1')).toBeNull()
+    expect(mocks.importHistory).toHaveBeenCalledTimes(1)
+    second.unmount()
+  })
+  it('does not install a stale user after account changes during sign-in', async () => {
+    let resolve
+    mocks.getUser.mockReturnValue(new Promise((done) => { resolve = done }))
+    const wrapper = create()
+    useAuthStore().logout()
+    resolve({ id: 1 })
+    await flushPromises()
+    expect(useAuthStore().user).toBeNull()
+    expect(mocks.getMyLists).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.resetAllMocks()
     vi.useFakeTimers()

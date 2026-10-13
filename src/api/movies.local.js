@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { useAuthStore } from '@/store/auth'
 import { LOCAL_API_URL } from '@/store/api'
+import { isTrustedApiRequest } from '@/utils/apiTrust'
 
 export const localApi = axios.create({
   baseURL: LOCAL_API_URL,
@@ -11,10 +12,18 @@ export const localApi = axios.create({
 localApi.interceptors.request.use((config) => {
   const authStore = useAuthStore()
   config.headers = config.headers || {}
-  if (authStore.token) {
+  if (
+    authStore.token &&
+    !authStore.token.startsWith('rh1_') &&
+    isTrustedApiRequest({ baseURL: config.baseURL, url: config.url })
+  ) {
     config.headers.Authorization = `Bearer ${authStore.token}`
   } else {
-    delete config.headers.Authorization
+    if (typeof config.headers.delete === 'function') config.headers.delete('Authorization')
+    else
+      for (const key of Object.keys(config.headers)) {
+        if (key.toLowerCase() === 'authorization') delete config.headers[key]
+      }
   }
   return config
 })

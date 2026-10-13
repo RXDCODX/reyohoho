@@ -42,7 +42,7 @@ async function loadMetadata(id) {
 // Bounded requests; failures keep the imported ID and are retried on the next load.
 export async function enrichListMetadata(
   items,
-  { persist, includeRatings = false, isCurrent = () => true } = {}
+  { persist, onItem, includeRatings = false, isCurrent = () => true } = {}
 ) {
   const result = [...items]
   for (let offset = 0; offset < items.length; offset += 3) {
@@ -63,6 +63,7 @@ export async function enrichListMetadata(
         if (!isCurrent() || !movie) return
         const enriched = fillCardMetadata(item, movie)
         result[offset + index] = enriched
+        onItem?.(enriched, offset + index)
         if (persist && JSON.stringify(enriched) !== JSON.stringify(item)) {
           // A storage failure must not hide a usable card. Subsequent loads retry.
           await persist(enriched).catch(() => {})

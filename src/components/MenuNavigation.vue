@@ -22,6 +22,7 @@ import DesktopMenu from './MenuNavigation/DesktopMenu.vue'
 import MobileMenu from './MenuNavigation/MobileMenu.vue'
 import ModalSearch from './ModalSearch.vue'
 import { handleApiError } from '@/constants'
+import { accountCapabilities } from '@/api/accountCapabilities'
 
 const store = useMainStore()
 const authStore = useAuthStore()
@@ -52,13 +53,13 @@ const navLinks = computed(() => {
             icon: 'fas fa-bookmark',
             text: 'Мои списки'
           },
-          {
+          ...(accountCapabilities(authStore).notifications ? [{
             to: '/notifications',
             exact: true,
             icon: 'fas fa-bell',
             text: 'Уведомления',
             component: 'NotificationBadge'
-          }
+          }] : [])
         ]
       : []),
     { to: '/top', icon: 'fa-solid fa-trophy', text: 'Популярное' },

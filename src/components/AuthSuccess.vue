@@ -11,6 +11,14 @@
     <div v-if="error" class="error-message">
       <p>{{ error }}</p>
       <router-link to="/login" class="retry-button">Попробовать снова</router-link>
+      <button
+        v-if="syncFailed"
+        :disabled="loading || moveHistory"
+        class="retry-button"
+        @click="processAuth"
+      >
+        Повторить синхронизацию
+      </button>
     </div>
     <div v-if="success" class="success-message">
       <p>Авторизация прошла успешно!</p>
@@ -31,6 +39,7 @@ import { getLocalList } from '@/utils/localUserLists'
 import { consumeAuthRedirect } from '@/utils/authRedirect'
 import { importCloudHistory } from '@/api/cloudHistory'
 import { normalizeHistory } from '../../migration/history-transfer/history-data.js'
+import { clearPendingSync, readPendingSync, savePendingSync } from '@/utils/pendingAccountSync'
 export default {
   name: 'AuthSuccess',
   setup() {
@@ -41,11 +50,20 @@ export default {
     const moveHistory = ref(false)
     const success = ref(false)
     const error = ref(null)
+    const syncFailed = ref(false)
     const base = ref(import.meta.env.VITE_BASE_URL || '/')
     let redirectTimeout = null
+    let running = false
+    let disposed = false
 
     const processAuth = async () => {
+      if (running || disposed) return
+      running = true
+      loading.value = true
+      error.value = null
+      syncFailed.value = false
       try {
+        const guestHistory = mainStore.historyOwner === 'guest' ? [...mainStore.history] : []
         const urlParams = new URLSearchParams(window.location.search)
         const token = urlParams.get('token') || authStore.token
 
@@ -53,12 +71,16 @@ export default {
           throw new Error('Не удалось подтвердить вход. Войдите через Telegram ещё раз.')
         }
         authStore.setToken(token)
+        const assertCurrent = () => {
+          if (disposed || authStore.token !== token) throw new Error('Аккаунт изменился')
+        }
 
         window.history.replaceState({}, document.title, `${base.value}auth-success`)
 
         let user = await getUser()
+        assertCurrent()
         authStore.setUser(user)
-        const localHistory = [...mainStore.history]
+        const owner = `${authStore.isWorkerSession ? 'worker' : 'legacy'}:${user.id}`
         const syncedListTypes = [
           USER_LIST_TYPES_ENUM.FAVORITE,
           USER_LIST_TYPES_ENUM.LATER,
@@ -66,46 +88,83 @@ export default {
           USER_LIST_TYPES_ENUM.COMPLETED,
           USER_LIST_TYPES_ENUM.ABANDONED
         ]
-        const localLists = new Map(syncedListTypes.map((type) => [type, [...getLocalList(type)]]))
-        let response = await getMyLists(USER_LIST_TYPES_ENUM.HISTORY)
+        let pending = readPendingSync(owner)
+        if (!pending) {
+          pending = {
+            history: normalizeHistory(guestHistory, 5000),
+            lists: Object.fromEntries(
+              syncedListTypes.map((type) => [type, [...getLocalList(type, 'guest')]])
+            ),
+            approved: false
+          }
+          savePendingSync(owner, pending)
+        }
+        const localHistory = pending.history
+        const localLists = new Map(syncedListTypes.map((type) => [type, pending.lists[type] || []]))
+        let response
         loading.value = false
         moveHistory.value = true
         try {
+          response = await getMyLists(USER_LIST_TYPES_ENUM.HISTORY, { fresh: true })
+          assertCurrent()
           if (authStore.isWorkerSession) {
             const hasLocalData =
               localHistory.length || [...localLists.values()].some((items) => items.length)
             if (
               hasLocalData &&
-              window.confirm(
-                'Синхронизировать локальную историю и списки этого браузера с облаком?'
-              )
+              (pending.approved ||
+                window.confirm(
+                  'Синхронизировать локальную историю и списки этого браузера с облаком?'
+                ))
             ) {
-              response = await importCloudHistory(localHistory.slice(0, 1000))
+              pending.approved = true
+              savePendingSync(owner, pending)
+              if (localHistory.length) response = await importCloudHistory(localHistory)
+              assertCurrent()
+              pending.history = []
+              savePendingSync(owner, pending)
               for (const type of syncedListTypes) {
-                const existing = new Set((await getMyLists(type)).map((item) => String(item.kp_id)))
-                for (const item of (localLists.get(type) || []).slice(0, 1000)) {
-                  if (authStore.token !== token) throw new Error('Аккаунт изменился')
+                const existing = new Set(
+                  (await getMyLists(type, { fresh: true })).map((item) => String(item.kp_id))
+                )
+                assertCurrent()
+                for (const item of localLists.get(type) || []) {
+                  assertCurrent()
                   if (!existing.has(String(item.kp_id))) await addToList(item.kp_id, type, item)
+                  assertCurrent()
+                  pending.lists[type] = pending.lists[type].filter(
+                    (entry) => String(entry.kp_id) !== String(item.kp_id)
+                  )
+                  savePendingSync(owner, pending)
                 }
                 await getMyLists(type)
               }
+              assertCurrent()
+              clearPendingSync(owner)
             } else {
               // Keep a local backup if the user declines importing guest history.
               if (localHistory.length)
                 localStorage.setItem(
                   'reyohoho-guest-history-backup',
-                  JSON.stringify(normalizeHistory(localHistory.slice(0, 1000)))
+                  JSON.stringify(normalizeHistory(localHistory, 5000))
                 )
               for (const type of syncedListTypes) await getMyLists(type)
             }
             if (authStore.token !== token) throw new Error('Аккаунт изменился')
             mainStore.setHistory(response)
           } else {
-            const candidates = new Map()
-            for (const title of response) candidates.set(String(title.kp_id), title)
-            for (const title of localHistory) candidates.set(String(title.kp_id), title)
+            const existingHistory = new Set(response.map((title) => String(title.kp_id)))
+            const candidates = new Map(localHistory.map((title) => [String(title.kp_id), title]))
 
             for (const title of [...candidates.values()].reverse()) {
+              assertCurrent()
+              if (existingHistory.has(String(title.kp_id))) {
+                pending.history = pending.history.filter(
+                  (entry) => String(entry.kp_id) !== String(title.kp_id)
+                )
+                savePendingSync(owner, pending)
+                continue
+              }
               let metadata = title
               const needsMetadata =
                 !title.title ||
@@ -124,39 +183,58 @@ export default {
                   console.warn(`Не удалось дополнить историю для ${title.kp_id}`, metadataError)
                 }
               }
+              assertCurrent()
               await addToList(title.kp_id, USER_LIST_TYPES_ENUM.HISTORY, metadata)
+              assertCurrent()
+              pending.history = pending.history.filter(
+                (entry) => String(entry.kp_id) !== String(title.kp_id)
+              )
+              savePendingSync(owner, pending)
             }
             response = await getMyLists(USER_LIST_TYPES_ENUM.HISTORY)
+            assertCurrent()
             mainStore.setHistory(response)
 
             for (const type of syncedListTypes) {
-              const serverList = await getMyLists(type)
+              const serverList = await getMyLists(type, { fresh: true })
+              const existing = new Set(serverList.map((item) => String(item.kp_id)))
               const merged = new Map(
-                [...serverList, ...(localLists.get(type) || [])].map((item) => [
-                  String(item.kp_id),
-                  item
-                ])
+                (localLists.get(type) || []).map((item) => [String(item.kp_id), item])
               )
               for (const item of merged.values()) {
-                await addToList(item.kp_id, type, item)
+                assertCurrent()
+                if (!existing.has(String(item.kp_id))) await addToList(item.kp_id, type, item)
+                assertCurrent()
+                pending.lists[type] = pending.lists[type].filter(
+                  (entry) => String(entry.kp_id) !== String(item.kp_id)
+                )
+                savePendingSync(owner, pending)
               }
               await getMyLists(type)
             }
+            assertCurrent()
+            clearPendingSync(owner)
           }
         } catch (err) {
           console.error('Auth error:', err)
-          error.value = 'Не удалось синхронизировать историю и списки. Попробуйте позже в настройках.'
+          error.value =
+            'Не удалось синхронизировать историю и списки. Попробуйте позже в настройках.'
           moveHistory.value = false
+          syncFailed.value = true
         }
         moveHistory.value = false
         success.value = true
-        redirectTimeout = setTimeout(async () => {
-          await router.replace(consumeAuthRedirect())
-        }, 2000)
+        if (!syncFailed.value)
+          redirectTimeout = setTimeout(async () => {
+            if (disposed || authStore.token !== token) return
+            await router.replace(consumeAuthRedirect())
+          }, 2000)
       } catch (err) {
         console.error('Auth error:', err)
         error.value = 'Не удалось завершить вход. Попробуйте войти через Telegram ещё раз.'
         loading.value = false
+      } finally {
+        running = false
       }
     }
 
@@ -165,6 +243,7 @@ export default {
     })
 
     onBeforeUnmount(() => {
+      disposed = true
       if (redirectTimeout) {
         clearTimeout(redirectTimeout)
         redirectTimeout = null
@@ -175,7 +254,9 @@ export default {
       loading,
       success,
       moveHistory,
-      error
+      error,
+      syncFailed,
+      processAuth
     }
   }
 }

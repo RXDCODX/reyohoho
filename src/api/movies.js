@@ -17,6 +17,7 @@ import {
 } from '@/api/providerRegistry'
 
 import { KINOBD_ENABLED } from '@/api/providerAvailability'
+import { getSafePlayerUrl } from '@/utils/playerSecurity'
 
 const PLAYER_PROVIDER_TIMEOUT_MS = 15000
 const getCurrentProvider = () => {
@@ -57,7 +58,8 @@ export const mergePlayerMaps = (playerMaps) => {
 
   for (const players of playerMaps) {
     for (const [rawKey, player] of Object.entries(players || {})) {
-      const iframe = String(player?.iframe || '').trim()
+      const iframe = getSafePlayerUrl(player?.iframe)
+      if (!iframe) continue
       if (iframe && seenIframes.has(iframe)) continue
 
       let key = rawKey
@@ -66,7 +68,7 @@ export const mergePlayerMaps = (playerMaps) => {
         key = `${rawKey} #${suffix}`
         suffix += 1
       }
-      merged[key] = player
+      merged[key] = { ...player, iframe }
       if (iframe) seenIframes.add(iframe)
     }
   }
@@ -161,6 +163,7 @@ const getPlayersWithFallback = async (...args) => {
         currentProvider,
         playerOptions.signal
       )
+      players = mergePlayerMaps([players])
     } catch (requestError) {
       error = requestError
     }
@@ -273,6 +276,7 @@ const apiSearch = async (...args) => {
   const configuredProvider = getCurrentSearchProvider()
   const order = getSearchProviderOrder(configuredProvider)
   let lastError = null
+  let successfulSearch = false
 
   for (const provider of order) {
     try {
@@ -280,6 +284,7 @@ const apiSearch = async (...args) => {
       if (typeof providerApi.apiSearch !== 'function') continue
 
       const results = await normalizeMovieListResponse(await providerApi.apiSearch(...args))
+      successfulSearch = true
       if (Array.isArray(results) && results.length > 0) {
         if (provider !== configuredProvider) {
           console.warn(`[movies] apiSearch fallback used: ${provider}`)
@@ -295,9 +300,7 @@ const apiSearch = async (...args) => {
     }
   }
 
-  if (lastError) {
-    console.warn('[movies] apiSearch fallback exhausted; returning empty results', lastError)
-  }
+  if (lastError && !successfulSearch) throw lastError
   return []
 }
 

@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getSafePlayerUrl } from '@/utils/playerSecurity'
 
 let isErrorSimulationEnabled = false
 const simulatedErrorCode = 500
@@ -49,7 +50,7 @@ const toPlayersMap = (
       continue
     }
 
-    const providerBaseIframe = provider?.iframeUrl || ''
+    const providerBaseIframe = getSafePlayerUrl(provider?.iframeUrl)
     const providerLabel = `${sourceLabel}>${providerType}`
 
     if (providerBaseIframe) {

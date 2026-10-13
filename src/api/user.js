@@ -1,11 +1,13 @@
 import { getApi } from '@/api/axios'
+import { reactive } from 'vue'
 import { normalizeMovieListResponse } from '@/api/movieSeoNormalizer'
 import { USER_LIST_TYPES_ENUM } from '@/constants'
-import { historyRequest, isCloudHistoryEnabled } from './cloudHistory'
+import { getCloudHistory, historyRequest, isCloudHistoryEnabled } from './cloudHistory'
 import { normalizeHistory } from '../../migration/history-transfer/history-data.js'
 import { useAuthStore } from '@/store/auth'
 import { workerAccountAdapter, workerAccountRequest, workerAuthEnabled } from './workerAccount'
 import { enrichListMetadata } from './listMetadata'
+import { accountCapabilities } from './accountCapabilities'
 import {
   addLocalListItem,
   clearLocalList,
@@ -15,8 +17,32 @@ import {
 } from '@/utils/localUserLists'
 
 const apiCall = async (callFn) => {
-  const api = useAuthStore().isWorkerSession ? workerAccountAdapter : await getApi()
-  return await callFn(api)
+  const auth = useAuthStore()
+  const token = auth.token
+  const api = auth.isWorkerSession ? workerAccountAdapter : await getApi()
+  if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
+  const response = await callFn(api)
+  if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
+  return response
+}
+const listOwner = () => {
+  const auth = useAuthStore()
+  if (auth.token && !auth.user?.id) throw new Error('Дождитесь подтверждения аккаунта')
+  return auth.token && auth.user?.id
+    ? `${auth.isWorkerSession ? 'worker' : 'legacy'}:${auth.user.id}`
+    : 'guest'
+}
+const listVersions = new Map()
+const listKey = (owner, type) => `${owner}:${type}`
+const invalidateList = (owner, type) => {
+  const key = listKey(owner, type)
+  const version = (listVersions.get(key) || 0) + 1
+  listVersions.set(key, version)
+  return version
+}
+const assertListCapability = (type) => {
+  if (type === USER_LIST_TYPES_ENUM.RATED && !accountCapabilities(useAuthStore()).rated)
+    throw new Error('Оценки недоступны для этого аккаунта')
 }
 
 export async function getMovieListStatus(id) {
@@ -39,7 +65,7 @@ export async function getMovieListStatus(id) {
     types.map(async (type) => {
       const items =
         type === 'history' && isCloudHistoryEnabled()
-          ? (await historyRequest()).history
+          ? await getCloudHistory()
           : (await apiCall((api) => api.get(`/list/${type}`))).data
       return [
         type,
@@ -74,12 +100,10 @@ export async function repairCardRatings(item, type, isCurrent = () => true) {
 }
 
 const addToList = async (id, type, metadata = null) => {
+  assertListCapability(type)
   const token = useAuthStore().token
-  if (useAuthStore().isWorkerSession) {
-    ;[metadata] = await enrichListMetadata([{ ...metadata, kp_id: String(id) }], {
-      isCurrent: () => useAuthStore().token === token
-    })
-  }
+  const owner = listOwner()
+  invalidateList(owner, type)
   // Cloud lists store cards, not full provider responses (cast, trailers, raw_data).
   // Preserve the legacy backend payload contract.
   const payload = useAuthStore().isWorkerSession
@@ -90,42 +114,69 @@ const addToList = async (id, type, metadata = null) => {
   if (type === USER_LIST_TYPES_ENUM.HISTORY && isCloudHistoryEnabled()) {
     const [item] = normalizeHistory([{ ...metadata, kp_id: id }])
     const data = await historyRequest(`/${encodeURIComponent(id)}`, 'PUT', item)
-    if (useAuthStore().token === token) addLocalListItem(type, id, metadata || {})
+    if (useAuthStore().token === token) addLocalListItem(type, id, metadata || {}, owner)
     return data
   }
   const { data } = await apiCall((api) => api.put(`/list/${type}/${id}`, payload))
-  if (useAuthStore().token === token) addLocalListItem(type, id, metadata || {})
+  if (useAuthStore().token === token) addLocalListItem(type, id, metadata || {}, owner)
   return data
 }
 
 const delFromList = async (id, type) => {
+  assertListCapability(type)
+  const token = useAuthStore().token
+  const owner = listOwner()
+  invalidateList(owner, type)
   if (type === USER_LIST_TYPES_ENUM.HISTORY && isCloudHistoryEnabled()) {
     const data = await historyRequest(`/${encodeURIComponent(id)}`, 'DELETE')
-    removeLocalListItem(type, id)
+    if (useAuthStore().token === token) removeLocalListItem(type, id, owner)
     return data
   }
   const { data } = await apiCall((api) => api.delete(`/list/${type}/${id}`))
-  removeLocalListItem(type, id)
+  if (useAuthStore().token === token) removeLocalListItem(type, id, owner)
   return data
 }
 
 const delAllFromList = async (type) => {
+  assertListCapability(type)
+  const token = useAuthStore().token
+  const owner = listOwner()
+  invalidateList(owner, type)
   if (type === USER_LIST_TYPES_ENUM.HISTORY && isCloudHistoryEnabled()) {
     const data = await historyRequest('', 'DELETE')
-    clearLocalList(type)
+    if (useAuthStore().token === token) clearLocalList(type, owner)
     return data
   }
   const { data } = await apiCall((api) => api.delete(`/list/${type}`))
-  clearLocalList(type)
+  if (useAuthStore().token === token) clearLocalList(type, owner)
   return data
 }
 
-const getMyLists = async (type) => {
+const getMyLists = async (type, { fresh = false, awaitMetadata = false } = {}) => {
+  assertListCapability(type)
   const auth = useAuthStore()
   const token = auth.token
-  const hydrate = (items) =>
-    enrichListMetadata(items, {
-      isCurrent: () => useAuthStore().token === token,
+  const owner = listOwner()
+  const version = invalidateList(owner, type)
+  const current = () =>
+    auth.token === token &&
+    (!token ||
+      (auth.user?.id &&
+        `${auth.isWorkerSession ? 'worker' : 'legacy'}:${auth.user.id}` === owner)) &&
+    listVersions.get(listKey(owner, type)) === version
+  const storeList = (items) => {
+    if (!current()) throw new Error('Список изменился. Повторите операцию')
+    replaceLocalList(type, items, owner)
+  }
+  const hydrate = (items) => {
+    const cards = reactive(items)
+    const task = enrichListMetadata(cards, {
+      isCurrent: current,
+      onItem: (item, index) => {
+        if (current()) {
+          cards[index] = item
+        }
+      },
       persist: auth.isWorkerSession
         ? (item) => {
             const [metadata] = normalizeHistory([item])
@@ -135,23 +186,30 @@ const getMyLists = async (type) => {
           }
         : undefined
     })
+    if (awaitMetadata) return task
+    // Persist once per batch instead of serializing the entire list for every card.
+    // A mutation invalidates this generation, so late metadata cannot restore deleted cards.
+    void task.then(() => { if (current()) replaceLocalList(type, cards, owner) }).catch(() => {})
+    return cards
+  }
   if (type === USER_LIST_TYPES_ENUM.HISTORY && isCloudHistoryEnabled()) {
-    const history = await hydrate(normalizeHistory((await historyRequest()).history))
-    replaceLocalList(type, history)
+    const history = await hydrate(await getCloudHistory())
+    storeList(history)
     return history
   }
   try {
     const { data } = await apiCall((api) => api.get(`/list/${type}`))
+    if (!Array.isArray(data)) throw new Error('Неполный ответ списка')
     const normalized = await hydrate(
       await normalizeMovieListResponse(data, {
-        enrichMissingSeo: type !== USER_LIST_TYPES_ENUM.HISTORY
+        enrichMissingSeo: false
       })
     )
-    replaceLocalList(type, normalized)
+    storeList(normalized)
     return normalized
   } catch (error) {
-    if (useAuthStore().token !== token) throw error
-    if (!error.response) return getLocalList(type)
+    if (!current()) throw error
+    if (!fresh && !error.response) return getLocalList(type, owner)
     throw error
   }
 }

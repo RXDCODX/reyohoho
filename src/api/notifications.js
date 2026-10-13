@@ -1,6 +1,7 @@
 import { getApi } from '@/api/axios'
 import { useAuthStore } from '@/store/auth'
 import { workerAccountAdapter } from './workerAccount'
+import { accountCapabilities } from './accountCapabilities'
 
 let isErrorSimulationEnabled = false
 const simulatedErrorCode = 500
@@ -15,9 +16,16 @@ const simulateErrorIfNeeded = async () => {
 }
 
 const apiCall = async (callFn) => {
+  const auth = useAuthStore()
+  const token = auth.token
+  if (!accountCapabilities(auth).notifications)
+    throw new Error('Уведомления недоступны для этого аккаунта')
   await simulateErrorIfNeeded()
   const api = useAuthStore().isWorkerSession ? workerAccountAdapter : await getApi()
-  return await callFn(api)
+  if (auth.token !== token) throw new Error('Аккаунт изменился')
+  const response = await callFn(api)
+  if (auth.token !== token) throw new Error('Аккаунт изменился')
+  return response
 }
 
 const getNotifications = async () => {

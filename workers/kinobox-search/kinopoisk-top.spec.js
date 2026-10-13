@@ -57,7 +57,8 @@ describe('fixed Kinopoisk top proxy', () => {
         )
         expect(result.status).toBe(502)
         expect(JSON.parse(logger.mock.calls.at(-1)[0]).reason).toBe(reason)
-        expect(cache.put).not.toHaveBeenCalled()
+        expect(cache.put.mock.calls[0][0]).toContain('/__kinopoisk-top-retry?')
+        expect(await cache.put.mock.calls[0][1].clone().text()).toBe('{}')
       }
     } finally {
       logger.mockRestore()
@@ -141,7 +142,7 @@ describe('fixed Kinopoisk top proxy', () => {
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('token=secret-transport-token')))
       expect((await serveKinopoiskTop(...args)).status).toBe(502)
       expect(JSON.stringify(logger.mock.calls)).not.toContain('secret')
-      expect(cache.put).not.toHaveBeenCalled()
+      expect(cache.put.mock.calls.every(([key]) => key.includes('/__kinopoisk-top-retry?'))).toBe(true)
     } finally {
       logger.mockRestore()
     }
@@ -220,7 +221,7 @@ describe('fixed Kinopoisk top proxy', () => {
     expect(response.headers.has('X-Kinobox-Transport')).toBe(false)
     expect(fetcher).not.toHaveBeenCalled()
   })
-  it('does not cache upstream failures', async () => {
+  it('caches only a short retry marker for upstream failures', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 403 })))
     const cache = { match: vi.fn().mockResolvedValue(null), put: vi.fn() }
     const waitUntil = vi.fn()
@@ -232,7 +233,9 @@ describe('fixed Kinopoisk top proxy', () => {
       cache
     )
     expect(response.status).toBe(502)
-    expect(cache.put).not.toHaveBeenCalled()
+    expect(cache.put.mock.calls[0][0]).toContain('/__kinopoisk-top-retry?')
+    expect(cache.put.mock.calls[0][1].headers.get('Cache-Control')).toBe('public, max-age=30')
+    expect(await cache.put.mock.calls[0][1].text()).toBe('{}')
     expect(waitUntil).not.toHaveBeenCalled()
   })
   it('deduplicates concurrent cold-key misses without sharing Response objects', async () => {
@@ -292,6 +295,9 @@ describe('fixed Kinopoisk top proxy', () => {
     ]
 
     expect((await serveKinopoiskTop(...args)).status).toBe(502)
+    expect((await serveKinopoiskTop(...args)).status).toBe(503)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    for (const key of entries.keys()) if (key.includes('/__kinopoisk-top-retry?')) entries.delete(key)
     expect((await serveKinopoiskTop(...args)).status).toBe(200)
     expect(fetcher).toHaveBeenCalledTimes(2)
   })

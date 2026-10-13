@@ -1,9 +1,17 @@
 <template>
   <transition name="modal">
     <div v-if="props.isOpen" class="modal-overlay" @click.self="close">
-      <div class="modal modern-dark-dialog">
+      <div
+        ref="dialog"
+        class="modal modern-dark-dialog"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
+        tabindex="-1"
+        @keydown="handleKeydown"
+      >
         <div class="modal-header">
-          <h3>Подтверждение</h3>
+          <h3 :id="titleId">Подтверждение</h3>
         </div>
         <div class="modal-content">
           <slot name="content">
@@ -28,10 +36,61 @@
 </template>
 
 <script setup>
+import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+
 const props = defineProps({
   isOpen: Boolean,
   message: String
 })
+const dialog = ref(null)
+const titleId = useId()
+let previousFocus = null
+const restoreFocus = () => {
+  if (previousFocus?.isConnected) previousFocus.focus()
+  previousFocus = null
+}
+watch(
+  () => props.isOpen,
+  async (open) => {
+    if (!open) {
+      restoreFocus()
+      return
+    }
+    previousFocus = typeof document === 'undefined' ? null : document.activeElement
+    await nextTick()
+    if (props.isOpen) (dialog.value?.querySelector('button') || dialog.value)?.focus()
+  },
+  { immediate: true }
+)
+onBeforeUnmount(restoreFocus)
+const handleKeydown = (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    close()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const elements = [
+    ...dialog.value.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')
+  ].filter((element) => !element.disabled && element.tabIndex >= 0 && !element.hidden)
+  if (!elements.length) {
+    event.preventDefault()
+    dialog.value.focus()
+    return
+  }
+  const first = elements[0]
+  const last = elements[elements.length - 1]
+  if (
+    event.shiftKey &&
+    (document.activeElement === first || document.activeElement === dialog.value)
+  ) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
 
 const emit = defineEmits(['confirm', 'close'])
 

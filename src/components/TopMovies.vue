@@ -84,6 +84,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useHead } from '@unhead/vue'
 import { buildStaticPageHead } from '@/utils/staticSeo'
 import { useMainStore } from '@/store/main'
+import { usePublicPageState } from '@/composables/usePublicPageState'
 
 const mainStore = useMainStore()
 const isKinopoiskTop = computed(() => mainStore.contentApiProvider !== 'local')
@@ -278,8 +279,18 @@ const fetchMovies = async () => {
 }
 
 applyRouteFilters(route.query)
+const publicPage = usePublicPageState(`top:${route.fullPath}`)
+const initialPage = publicPage.read()
+if (initialPage && isKinopoiskTop.value) {
+  movies.value = initialPage.movies
+  hasMore.value = initialPage.hasMore
+  page.value = initialPage.page
+}
 
-onServerPrefetch(fetchMovies)
+onServerPrefetch(async () => {
+  await fetchMovies()
+  if (!errorMessage.value) publicPage.save({ movies: movies.value, hasMore: hasMore.value, page: page.value })
+})
 
 watch(canShowMore, (canLoad) => {
   if (canLoad) {

@@ -1,5 +1,5 @@
 <template>
-  <div class="notification-badge-wrapper">
+  <div v-if="available" class="notification-badge-wrapper">
     <router-link
       to="/notifications"
       class="notification-badge"
@@ -14,12 +14,14 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onUnmounted, watch } from 'vue'
+import { accountCapabilities } from '@/api/accountCapabilities'
 import { useNotificationsStore } from '@/store/notifications'
 import { useAuthStore } from '@/store/auth'
 
 const notificationsStore = useNotificationsStore()
 const authStore = useAuthStore()
+const available = computed(() => accountCapabilities(authStore).notifications)
 
 const unreadCount = computed(() => notificationsStore.unreadCount)
 const hasUnreadNotifications = computed(() => notificationsStore.hasUnreadNotifications)
@@ -31,20 +33,28 @@ const displayCount = computed(() => {
 
 let pollingInterval = null
 
-onMounted(() => {
-  if (authStore.token) {
-    notificationsStore.fetchUnreadCount()
+watch(
+  () => authStore.token,
+  () => {
+    const enabled = available.value
+    clearInterval(pollingInterval)
+    pollingInterval = null
+    notificationsStore.reset()
+    if (enabled) {
+      notificationsStore.fetchUnreadCount()
 
-    pollingInterval = setInterval(
-      () => {
-        if (authStore.token) {
-          notificationsStore.fetchUnreadCount()
-        }
-      },
-      1000 * 60 * 5
-    ) // 30 minutes
-  }
-})
+      pollingInterval = setInterval(
+        () => {
+          if (available.value) {
+            notificationsStore.fetchUnreadCount()
+          }
+        },
+        1000 * 60 * 5
+      )
+    }
+  },
+  { immediate: true }
+)
 
 onUnmounted(() => {
   if (pollingInterval) {

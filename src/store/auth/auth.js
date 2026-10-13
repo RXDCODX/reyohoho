@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { AUTH_STORE_NAME } from '../constants'
 import { useMainStore } from '../main'
+import { getLocalList, replaceLocalList } from '@/utils/localUserLists'
 
 export const useAuthStore = defineStore(AUTH_STORE_NAME, {
   state: () => ({
@@ -15,10 +16,20 @@ export const useAuthStore = defineStore(AUTH_STORE_NAME, {
 
   actions: {
     setUser(user) {
+      const main = useMainStore()
+      const owner = user?.id ? `${this.isWorkerSession ? 'worker' : 'legacy'}:${user.id}` : 'guest'
+      if (main.historyOwner !== owner) {
+        replaceLocalList('history', main.history, main.historyOwner || 'guest')
+        main.historyOwner = owner
+        main.setHistory(getLocalList('history', owner))
+      }
       this.user = user
     },
     setToken(token) {
-      if (this.token !== token) useMainStore().cloudHistoryAccount = null
+      if (this.token !== token) {
+        useMainStore().cloudHistoryAccount = null
+        this.setUser(null)
+      }
       this.token = token
     },
     logout() {
@@ -31,7 +42,7 @@ export const useAuthStore = defineStore(AUTH_STORE_NAME, {
           .catch(() => {})
       }
       useMainStore().cloudHistoryAccount = null
-      this.user = null
+      this.setUser(null)
       this.token = null
     },
     async updateUserName(name) {
@@ -44,6 +55,7 @@ export const useAuthStore = defineStore(AUTH_STORE_NAME, {
   },
 
   persist: {
-    key: AUTH_STORE_NAME
+    key: AUTH_STORE_NAME,
+    afterHydrate: ({ store }) => store.setUser(store.token ? store.user : null)
   }
 })

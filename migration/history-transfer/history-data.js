@@ -16,9 +16,9 @@ export function cardRatings(item) {
   return result
 }
 
-export function normalizeHistory(items) {
-  if (!Array.isArray(items) || items.length > MAX_HISTORY_ITEMS) {
-    throw new Error('История должна содержать не более 1000 записей')
+export function normalizeHistory(items, maxItems = MAX_HISTORY_ITEMS) {
+  if (!Array.isArray(items) || items.length > maxItems) {
+    throw new Error(`История должна содержать не более ${maxItems} записей`)
   }
   const result = new Map()
   for (const item of items) {

@@ -19,6 +19,7 @@
               }}</span>
             </button>
             <button
+              v-if="capabilities.sharing"
               class="share-btn"
               :disabled="loading"
               title="Поделиться списком"
@@ -70,7 +71,7 @@
         @change="handleImportFileSelect"
       />
 
-      <div v-if="movies.length === 0 && !loading" class="empty-state">
+      <div v-if="movies.length === 0 && !loading && !errorMessage" class="empty-state">
         <span class="material-icons">movie</span>
         <p>Нет фильмов для отображения</p>
       </div>
@@ -111,16 +112,16 @@ import {
 import { useAuthStore } from '@/store/auth'
 import { handleApiError, USER_LIST_TYPES_ENUM } from '@/constants'
 import { MovieList } from '@/components/MovieList'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ErrorMessage from '@/components/ErrorMessage.vue'
 import Notification from '@/components/notification/ToastMessage.vue'
 import BaseModal from '@/components/BaseModal.vue'
 import { useMainStore } from '@/store/main'
 import { logoutAndRedirect } from '@/utils/authSession'
-import { enrichListMetadata } from '@/api/listMetadata'
 import { cardRatings } from '../../migration/history-transfer/history-data.js'
 import { importCloudHistory, isCloudHistoryEnabled } from '@/api/cloudHistory'
+import { accountCapabilities } from '@/api/accountCapabilities'
 
 const movies = ref([])
 const loading = ref(true)
@@ -136,17 +137,23 @@ const listCounters = ref({})
 const mainStore = useMainStore()
 const importFileInput = ref(null)
 const isImporting = ref(false)
+let fetchGeneration = 0
+const deletingItems = new Set()
+const captureView = () => ({ token: authStore.token, userId: user_id.value, type: typeFilter.value })
+const isCurrentView = (view) =>
+  authStore.token === view.token && user_id.value === view.userId && typeFilter.value === view.type
 
 const notificationRef = ref(null)
-const exportableListTypes = [
+const capabilities = computed(() => accountCapabilities(authStore))
+const exportableListTypes = computed(() => [
   USER_LIST_TYPES_ENUM.FAVORITE,
   USER_LIST_TYPES_ENUM.LATER,
   USER_LIST_TYPES_ENUM.WATCHING,
   USER_LIST_TYPES_ENUM.COMPLETED,
   USER_LIST_TYPES_ENUM.ABANDONED,
-  USER_LIST_TYPES_ENUM.RATED,
+  ...(capabilities.value.rated ? [USER_LIST_TYPES_ENUM.RATED] : []),
   USER_LIST_TYPES_ENUM.HISTORY
-]
+])
 
 const canManageOwnLists = computed(() => {
   return !user_id.value || String(user_id.value) === String(authStore.user?.id)
@@ -209,18 +216,28 @@ const buildExportPayload = async () => {
   }
 
   const exportedLists = {}
+  const token = authStore.token
+  const types = [...exportableListTypes.value]
+  let localHistory = normalizeHistoryItems(mainStore.history)
   const listResults = await Promise.allSettled(
-    exportableListTypes.map(async (type) => {
-      const list = await getMyLists(type)
+    types.map(async (type) => {
+      const list = await getMyLists(type, { fresh: true })
+      if (!Array.isArray(list)) throw new Error('Неполный ответ списка')
+      if (type === USER_LIST_TYPES_ENUM.HISTORY) localHistory = normalizeHistoryItems(list)
       const ids = Array.isArray(list)
         ? [...new Set(list.map((item) => toValidKpId(item?.kp_id)).filter(Boolean))]
         : []
       return { type, ids }
     })
   )
+  if (authStore.token !== token) throw new Error('Аккаунт изменился. Повторите экспорт')
 
   listResults.forEach((result, index) => {
-    const type = exportableListTypes[index]
+    if (result.status !== 'fulfilled')
+      throw new Error(
+        'Экспорт не сохранён: не удалось получить все списки с сервера. Повторите попытку.'
+      )
+    const type = types[index]
     exportedLists[type] = result.status === 'fulfilled' ? result.value.ids : []
   })
 
@@ -230,7 +247,7 @@ const buildExportPayload = async () => {
     exportedAt: new Date().toISOString(),
     data: {
       serverLists: exportedLists,
-      localHistory: normalizeHistoryItems(mainStore.history)
+      localHistory
     }
   }
 }
@@ -275,7 +292,7 @@ const parseImportPayload = (rawPayload) => {
     payload?.data?.localHistory || payload?.localHistory || payload?.history || []
 
   const parsedLists = {}
-  exportableListTypes.forEach((type) => {
+  exportableListTypes.value.forEach((type) => {
     const ids = Array.isArray(sourceLists[type])
       ? [...new Set(sourceLists[type].map(toValidKpId).filter(Boolean))]
       : []
@@ -298,19 +315,22 @@ const importServerLists = async (parsedLists) => {
   const token = authStore.token
 
   const currentLists = {}
-  for (const type of exportableListTypes) {
-    try {
-      const list = await getMyLists(type)
-      currentLists[type] = new Set(
-        (Array.isArray(list) ? list : []).map((item) => toValidKpId(item?.kp_id)).filter(Boolean)
-      )
-    } catch {
-      currentLists[type] = new Set()
-    }
+  for (const type of exportableListTypes.value) {
+    const list = await getMyLists(type, { fresh: true })
+    if (authStore.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
+    if (!Array.isArray(list)) throw new Error('Неполный ответ списка')
+    currentLists[type] = new Set(
+      (Array.isArray(list) ? list : []).map((item) => toValidKpId(item?.kp_id)).filter(Boolean)
+    )
   }
 
-  for (const type of exportableListTypes) {
+  for (const type of exportableListTypes.value) {
+    if (authStore.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
     const incomingIds = parsedLists[type] || []
+    if (type === USER_LIST_TYPES_ENUM.HISTORY && isCloudHistoryEnabled()) {
+      if (incomingIds.length) await importCloudHistory(incomingIds.map((kp_id) => ({ kp_id })))
+      continue
+    }
     for (const kpId of incomingIds) {
       if (authStore.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
       if (currentLists[type].has(kpId)) continue
@@ -335,11 +355,20 @@ const handleImportFileSelect = async (event) => {
   try {
     isImporting.value = true
     loading.value = true
+    const token = authStore.token
 
     const fileText = await file.text()
     const parsedJson = JSON.parse(fileText)
     const parsedPayload = parseImportPayload(parsedJson)
-    const hasAnyServerData = exportableListTypes.some(
+    if (authStore.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
+    if (isCloudHistoryEnabled() && parsedPayload.localHistory.length) {
+      const historyIds = new Set(parsedPayload.localHistory.map((item) => String(item.kp_id)))
+      // Preserve original timestamps instead of importing the same IDs with today's date first.
+      parsedPayload.lists[USER_LIST_TYPES_ENUM.HISTORY] = (
+        parsedPayload.lists[USER_LIST_TYPES_ENUM.HISTORY] || []
+      ).filter((id) => !historyIds.has(String(id)))
+    }
+    const hasAnyServerData = exportableListTypes.value.some(
       (type) => (parsedPayload.lists[type] || []).length > 0
     )
     const hasLocalHistory = parsedPayload.localHistory.length > 0
@@ -361,13 +390,12 @@ const handleImportFileSelect = async (event) => {
 
     if (hasLocalHistory) {
       const beforeCount = mainStore.history.length
-      const token = authStore.token
-      const importedHistory = await enrichListMetadata(parsedPayload.localHistory, {
-        isCurrent: () => authStore.token === token
-      })
+      if (authStore.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
+      const importedHistory = parsedPayload.localHistory
       const mergedHistory = isCloudHistoryEnabled()
         ? await importCloudHistory(importedHistory)
         : mergeHistory(mainStore.history, importedHistory)
+      if (authStore.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
       mainStore.setHistory(mergedHistory)
       const importedCount = Math.max(0, mergedHistory.length - beforeCount)
       summary.push(`история: +${importedCount}`)
@@ -401,20 +429,22 @@ const copyShareLink = async () => {
   }
 }
 
-const typeFilters = [
+const typeFilters = computed(() => [
   { label: 'Избранное', value: USER_LIST_TYPES_ENUM.FAVORITE },
   { label: 'Смотрю', value: USER_LIST_TYPES_ENUM.WATCHING },
   { label: 'Позже', value: USER_LIST_TYPES_ENUM.LATER },
   { label: 'Просмотрено', value: USER_LIST_TYPES_ENUM.COMPLETED },
   { label: 'Брошено', value: USER_LIST_TYPES_ENUM.ABANDONED },
-  { label: 'Оценено', value: USER_LIST_TYPES_ENUM.RATED }
-]
+  ...(capabilities.value.rated ? [{ label: 'Оценено', value: USER_LIST_TYPES_ENUM.RATED }] : [])
+])
 
 const fetchCounters = async () => {
+  const view = captureView()
   try {
     const targetUserId = user_id.value || authStore.user?.id
     if (targetUserId) {
-      listCounters.value = await getListCounters(targetUserId)
+      const counters = await getListCounters(targetUserId)
+      if (isCurrentView(view)) listCounters.value = counters
     }
   } catch (error) {
     console.error('Error fetching counters:', error)
@@ -422,24 +452,28 @@ const fetchCounters = async () => {
 }
 
 const fetchMovies = async () => {
+  const generation = ++fetchGeneration
+  const view = captureView()
+  const current = () => generation === fetchGeneration && isCurrentView(view)
   loading.value = true
   errorMessage.value = ''
   errorCode.value = null
 
   try {
-    if (user_id.value) {
-      movies.value = await getUserLists(typeFilter.value, user_id.value)
-    } else {
-      movies.value = await getMyLists(typeFilter.value)
-    }
+    const result = view.userId
+      ? await getUserLists(view.type, view.userId)
+      : await getMyLists(view.type)
+    if (!current()) return
+    movies.value = result
     await fetchCounters()
   } catch (error) {
+    if (!current()) return
     const { message, code } = handleApiError(error)
     errorMessage.value = message
     errorCode.value = code
     movies.value = []
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 
@@ -454,14 +488,18 @@ const changeTypeFilter = (value) => {
 }
 
 const clearList = async () => {
+  if (!canManageOwnLists.value || !authStore.token || loading.value) return
+  const view = captureView()
   loading.value = true
   if (authStore.token) {
     try {
-      await delAllFromList(typeFilter.value)
+      await delAllFromList(view.type)
+      if (!isCurrentView(view)) return
       movies.value = []
       notificationRef.value.showNotification('Список очищен')
       await fetchCounters()
     } catch (error) {
+      if (!isCurrentView(view)) return
       const { message, code } = handleApiError(error)
       errorMessage.value = message
       errorCode.value = code
@@ -471,18 +509,27 @@ const clearList = async () => {
       }
     }
   }
-  loading.value = false
-  showModal.value = false
+  if (isCurrentView(view)) {
+    loading.value = false
+    showModal.value = false
+  }
 }
 
 const handleItemDeleted = async (deletedItemId) => {
+  if (!canManageOwnLists.value || !authStore.token) return
+  const view = captureView()
+  const key = `${view.token}:${view.type}:${deletedItemId}`
+  if (deletingItems.has(key)) return
+  deletingItems.add(key)
   if (authStore.token) {
     try {
-      await delFromList(deletedItemId, typeFilter.value)
-      movies.value = movies.value.filter((item) => item.kp_id !== deletedItemId)
+      await delFromList(deletedItemId, view.type)
+      if (!isCurrentView(view)) return
+      movies.value = movies.value.filter((item) => String(item.kp_id) !== String(deletedItemId))
       notificationRef.value.showNotification('Фильм удален из списка')
       await fetchCounters()
     } catch (error) {
+      if (!isCurrentView(view)) return
       const { message, code } = handleApiError(error)
       errorMessage.value = message
       errorCode.value = code
@@ -490,27 +537,27 @@ const handleItemDeleted = async (deletedItemId) => {
       if (code === 401) {
         await logoutAndRedirect({ authStore, router })
       }
+    } finally {
+      deletingItems.delete(key)
     }
   }
 }
 
 watch(
-  () => route.query.type,
-  (newType) => {
-    if (newType && Object.values(USER_LIST_TYPES_ENUM).includes(newType)) {
-      typeFilter.value = newType
-      fetchMovies()
-    }
-  }
+  () => [route.query.type, route.params.user_id, authStore.token],
+  ([newType, newUserId]) => {
+    user_id.value = newUserId
+    typeFilter.value = typeFilters.value.some((type) => type.value === newType)
+      ? newType : USER_LIST_TYPES_ENUM.FAVORITE
+    movies.value = []
+    listCounters.value = {}
+    showModal.value = false
+    fetchMovies()
+  },
+  { immediate: true }
 )
 
-onMounted(() => {
-  const queryType = route.query.type
-  if (queryType && Object.values(USER_LIST_TYPES_ENUM).includes(queryType)) {
-    typeFilter.value = queryType
-  }
-  fetchMovies()
-})
+onUnmounted(() => { fetchGeneration++ })
 </script>
 
 <style scoped>

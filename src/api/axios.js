@@ -7,7 +7,8 @@ import { getCurrentApiUrl } from './backendConfig'
 let apiInstance = null
 let apiInstancePromise = null
 let apiInstanceGeneration = 0
-const SENSITIVE_QUERY_KEYS = /^(?:token|access_token|auth|authorization|code|key|api_key|apikey|secret|password|signature|sig)$/i
+const SENSITIVE_QUERY_KEYS =
+  /^(?:token|access_token|auth|authorization|code|key|api_key|apikey|secret|password|signature|sig)$/i
 
 export const redactRequestUrl = (value, baseURL = '') => {
   try {
@@ -47,7 +48,11 @@ const attachDynamicRequestState = (instance) => {
       if (authStore.token && !authStore.token.startsWith('rh1_') && canAttachAuthorization) {
         config.headers.Authorization = `Bearer ${authStore.token}`
       } else {
-        delete config.headers.Authorization
+        if (typeof config.headers.delete === 'function') config.headers.delete('Authorization')
+        else
+          for (const key of Object.keys(config.headers)) {
+            if (key.toLowerCase() === 'authorization') delete config.headers[key]
+          }
       }
 
       return config

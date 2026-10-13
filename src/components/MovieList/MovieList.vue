@@ -108,12 +108,19 @@ const movieUrl = (movie) => {
 
 const emit = defineEmits(['item-deleted'])
 const removeFromHistory = async (kp_id) => {
+  // UserLists owns mutations of its current list.
+  if (!isHistory) {
+    emit('item-deleted', kp_id)
+    return
+  }
   const normalizedId = String(kp_id)
   if (deletingIds.value.has(normalizedId)) return
 
   deletingIds.value.add(normalizedId)
 
   if (authStore.token) {
+    const token = authStore.token
+    const owner = mainStore.historyOwner
     const previousHistory = [...mainStore.history]
     mainStore.removeFromHistory(kp_id)
     emit('item-deleted', kp_id)
@@ -121,6 +128,7 @@ const removeFromHistory = async (kp_id) => {
     try {
       await delFromList(kp_id, USER_LIST_TYPES_ENUM.HISTORY)
     } catch (error) {
+      if (authStore.token !== token || mainStore.historyOwner !== owner) return
       const { code } = handleApiError(error)
       console.error('Ошибка загрузки истории:', error)
       if (code === 401) {

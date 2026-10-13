@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { addToList, getMyLists, getMovieListStatus, repairCardRatings } from './user'
+import { addToList, delFromList, getMyLists, getMovieListStatus, repairCardRatings } from './user'
+import { replaceLocalList } from '@/utils/localUserLists'
 import { getKpInfo } from './movies.kinobox'
 import { normalizeHistory } from '../../migration/history-transfer/history-data.js'
 
 const mocks = vi.hoisted(() => ({
-  auth: { token: 'test-session', isWorkerSession: true },
+  auth: { token: 'test-session', isWorkerSession: true, user: { id: 11 } },
   legacy: { put: vi.fn() },
-  worker: { put: vi.fn(), get: vi.fn() },
+  worker: { put: vi.fn(), get: vi.fn(), delete: vi.fn() },
   patch: vi.fn(),
   history: vi.fn(),
   localAdd: vi.fn()
@@ -20,6 +21,7 @@ vi.mock('./workerAccount', () => ({
 }))
 vi.mock('./cloudHistory', () => ({
   isCloudHistoryEnabled: () => true,
+  getCloudHistory: async () => (await mocks.history()).history,
   historyRequest: mocks.history
 }))
 vi.mock('./movies.kinobox', () => ({ getKpInfo: vi.fn() }))
@@ -47,6 +49,8 @@ const byteLength = (body) => new TextEncoder().encode(JSON.stringify(body)).byte
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.auth.isWorkerSession = true
+  mocks.auth.token = 'test-session'
+  mocks.auth.user = { id: 11 }
   mocks.worker.put.mockResolvedValue({ data: { ok: true } })
   mocks.legacy.put.mockResolvedValue({ data: { ok: true } })
   mocks.patch.mockResolvedValue({ ok: true })
@@ -54,6 +58,36 @@ beforeEach(() => {
 })
 
 describe('compact cloud list requests', () => {
+  it.each(['delete', 'account'])('returns cards before metadata and ignores enrichment after %s', async (change) => {
+    let finishMetadata
+    getKpInfo.mockImplementation(() => new Promise((resolve) => { finishMetadata = resolve }))
+    mocks.worker.get.mockResolvedValue({ data: [{ kp_id: '301', title: '', poster: '' }] })
+    mocks.worker.delete.mockResolvedValue({ data: {} })
+    const cards = await getMyLists('favorite')
+    expect(cards).toHaveLength(1)
+    expect(cards[0].title).toBe('')
+    const saves = replaceLocalList.mock.calls.length
+    if (change === 'delete') await delFromList('301', 'favorite')
+    else mocks.auth.token = 'new-account'
+    finishMetadata({ kp_id: '301', title: 'Late movie', poster: 'https://example.test/a.jpg' })
+    await vi.waitFor(() => expect(getKpInfo).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(cards[0].title).toBe('')
+    expect(replaceLocalList).toHaveBeenCalledTimes(saves)
+    expect(mocks.patch).not.toHaveBeenCalled()
+  })
+  it('rejects account changes while a response is in flight', async () => {
+    mocks.worker.get.mockImplementation(async () => {
+      mocks.auth.token = 'different-session'
+      return { data: [movie] }
+    })
+    await expect(getMyLists('favorite')).rejects.toThrow('Аккаунт изменился')
+  })
+  it('does not use guest storage while an authenticated owner is unknown', async () => {
+    mocks.auth.user = null
+    await expect(getMyLists('favorite')).rejects.toThrow('Дождитесь')
+    expect(mocks.worker.get).not.toHaveBeenCalled()
+  })
   it('does not put a failed cloud list write in the local cache', async () => {
     mocks.worker.put.mockRejectedValue(new Error('offline'))
     await expect(addToList('843831', 'favorite', movie)).rejects.toThrow('offline')
@@ -103,20 +137,18 @@ describe('compact cloud list requests', () => {
       expect(payload).toEqual({ metadata: normalizeHistory([movie])[0] })
       expect(byteLength(payload)).toBeLessThan(8192)
       expect(payload.metadata).not.toHaveProperty('raw_data')
-      expect(mocks.localAdd).toHaveBeenCalledWith(type, '843831', movie)
+      expect(mocks.localAdd).toHaveBeenCalledWith(type, '843831', movie, 'worker:11')
       expect(getKpInfo).not.toHaveBeenCalled()
     }
   )
-  it('sends compact hydrated metadata for a bare ID', async () => {
-    getKpInfo.mockResolvedValue(movie)
+  it('writes a bare ID without waiting for provider metadata', async () => {
+    getKpInfo.mockImplementation(() => new Promise(() => {}))
     await addToList('843831', 'favorite')
     expect(mocks.worker.put.mock.calls[0][1].metadata).toMatchObject({
       kp_id: '843831',
-      title: 'Сноуден',
-      poster: movie.poster,
-      year: '2016',
-      type: 'FILM'
+      title: ''
     })
+    expect(getKpInfo).not.toHaveBeenCalled()
   })
   it('still adds the ID if metadata loading is unavailable', async () => {
     getKpInfo.mockRejectedValue(new Error('offline'))
@@ -137,7 +169,7 @@ describe('compact cloud list requests', () => {
   it('strips full provider data from metadata repair PATCH requests', async () => {
     mocks.worker.get.mockResolvedValue({ data: [{ ...movie, title: '', poster: '' }] })
     getKpInfo.mockResolvedValue(movie)
-    await getMyLists('favorite')
+    await getMyLists('favorite', { awaitMetadata: true })
     const [path, method, payload] = mocks.patch.mock.calls[0]
     expect(path).toBe('/list/favorite/843831')
     expect(method).toBe('PATCH')

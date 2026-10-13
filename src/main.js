@@ -13,7 +13,8 @@ const shouldPrerenderMoviePages = () => import.meta.env.VITE_PRERENDER_MOVIE_PAG
 export const createApp = ViteSSG(
   App,
   { routes, base: import.meta.env.VITE_BASE_URL || '/' },
-  ({ app, router, isClient }) => {
+  ({ app, router, isClient, initialState }) => {
+    app.provide('publicPageState', { state: initialState, server: !isClient })
     installRouterGuards(router, { isClient })
     useAppSetup(app, { router, isClient })
 
