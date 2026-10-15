@@ -1,9 +1,0 @@
-query ContentAvailabilityOttMeta {
-  ott {
-    contentAvailability {
-      geo {
-        availabilityStatus
-      }
-    }
-  }
-}

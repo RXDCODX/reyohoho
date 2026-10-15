@@ -1,9 +1,0 @@
-query SocialHasNewRequests {
-  userProfile {
-    social {
-      subscribersRequests(limit: 0) {
-        hasNewRequests
-      }
-    }
-  }
-}

@@ -1,9 +1,0 @@
-query UserContentPackagesQuery {
-  userProfile {
-    subscriptionInfo {
-      contentPackages {
-        billingFeatureName
-      }
-    }
-  }
-}

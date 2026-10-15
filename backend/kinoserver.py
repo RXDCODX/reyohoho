@@ -31,7 +31,7 @@ try:
         kinopoisk_id_from_anime,
         normalize_anime as normalize_shikimori_anime,
     )
-except ImportError:  # Direct execution: python graphql_extracted/kinoserver.py
+except ImportError:  # Direct execution: python backend/kinoserver.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from backend.backend import GraphQLError as BackendGraphQLError
     from backend.backend import fetch_film_async as fetch_graphql_film
@@ -637,32 +637,6 @@ def first_present(*values: Any) -> Any:
         if value not in (None, "", [], {}):
             return value
     return None
-
-
-def gql_query_path(*parts: str) -> Path:
-    return Path(__file__).resolve().parent.joinpath(*parts)
-
-
-def load_gql_query(name: str) -> str:
-    candidates = [
-        gql_query_path("kp_graphql_queries", f"{name}.gql"),
-        gql_query_path(".jellyfin-kp-white_tmp", "KinopoiskWhite", "Api", "Queries", f"{name}.gql"),
-    ]
-    for path in candidates:
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    raise RuntimeError(f"GraphQL query template is missing: {name}.gql")
-
-
-def load_kinopapi_body(*parts: str) -> dict[str, Any]:
-    candidates = [
-        gql_query_path("kp_graphql_queries", "kinopapi", *parts),
-        gql_query_path(".kinopapi_tmp", "kinopapi", "templates", "bodies", *parts),
-    ]
-    for path in candidates:
-        if path.is_file():
-            return jsonlib.loads(path.read_text(encoding="utf-8"))
-    raise RuntimeError(f"GraphQL JSON body template is missing: {'/'.join(parts)}")
 
 
 def normalize_top_item(item: dict[str, Any]) -> dict[str, Any]:

@@ -1,7 +1,0 @@
-query StreamsTimingsAuthToken {
-  userProfile {
-    userProfileCredentials {
-      timingsAuthToken
-    }
-  }
-}

@@ -5442,14 +5442,7 @@ vue-router@^5.1.0:
     unplugin-utils "^0.3.1"
     yaml "^2.9.0"
 
-vue3-cookies@^1.0.6:
-  version "1.0.6"
-  resolved "https://registry.npmjs.org/vue3-cookies/-/vue3-cookies-1.0.6.tgz"
-  integrity sha512-a1UvVD0qIgxyOqjlSOwnLnqAnz8ASltugEv8yX+96i/WGZAN9fEDci7xO4HIWZE1uToUnRq9JnFhvfDCSo45OA==
-  dependencies:
-    vue "^3.0.0"
-
-vue@3.5.43, vue@^3.0.0:
+vue@3.5.43:
   version "3.5.43"
   resolved "https://registry.npmjs.org/vue/-/vue-3.5.43.tgz#bab91368e7b9aad9b89dd92e866b120081deb094"
   integrity sha512-o5qZoksdnjIKvW1srZ3ab7pcDNYAerBjRe54D0LBLfRdCYFrSgBHVXokMas35czQc0//lmx4/tuY4ZNQ+Rf2Ng==

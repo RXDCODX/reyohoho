@@ -45,8 +45,8 @@ backend одновременно проксирует внешние providers �
 | CI/CD | GitHub Actions, GitLab Pages, GitHub Pages, Render static site, Vercel rewrite |
 | Containers | Frontend dev Dockerfile; backend Dockerfile; PostgreSQL + оба приложения в `docker-compose.yml` |
 
-В проекте нет TypeScript typecheck: frontend написан на JavaScript, а `vuex.d.ts` является старым
-declaration-файлом. Отдельного PWA smoke-test в CI нет; PWA формируется как часть production build.
+В проекте нет TypeScript typecheck: frontend написан на JavaScript. Старый `vuex.d.ts` удалён;
+состояние хранится в Pinia. PWA формируется как часть production build.
 
 ## 3. Высокоуровневая архитектура
 
@@ -101,7 +101,7 @@ persist/localStorage. Notifications сейчас не сохраняются: ba
 | `backend/` | Основной server runtime | Изолированные validation/error fixes с pytest | route contracts, provider fallback, auth, DB lifecycle | Ruff, compileall, backend pytest |
 | `backend/tests/` | Backend integration/unit tests | Добавление regression tests | Shared fixtures/API assumptions | `python -m pytest backend/tests -q` |
 | `backend/migrations/` | Alembic environment и schema history | Новая forward migration | Изменение применённой initial migration, downgrade data loss | migration on empty DB + upgrade existing copy |
-| `graphql_extracted/` | Исследовательский/сгенерированный GraphQL corpus | Не менять для runtime-задач | Любое массовое обновление — отдельным generated commit | operation resolution tests, corpus regeneration smoke |
+| `backend/graphql/` | 13 GraphQL-документов с fragments для runtime | Используются Python providers | Новые запросы добавлять со всеми fragments | operation resolution tests, backend tests |
 | `docs/` | Audit, API contracts, guides и эта карта | Документация отдельным diff | Не считать docs источником истины без сверки с кодом | links/path check, `git diff --check` |
 | `.github/workflows/` | Quality и GitHub Pages deployment | Pin versions/quality commands отдельно | permissions, scheduled bot commit/push, deploy branch | workflow review + CI run |
 
@@ -226,7 +226,7 @@ Handlers сами вызывают `commit()`/`rollback()`; автоматиче
 
 ### GraphQL/FastAPI adapter
 
-`backend/backend.py` читает operation documents из `graphql_extracted/clean_graphql/queries/query`,
+`backend/backend.py` читает operation documents из `backend/graphql/`,
 выполняет Kinopoisk GraphQL и строит `FilmResponse`. Его async функции импортируются Sanic provider.
 В этом же файле существует отдельный FastAPI `app` с `/health` и `/films/{film_id}`. Deployment его
 не запускает; удалять или переносить файл нельзя без замены импортов Sanic и GraphQL tests.
@@ -500,10 +500,9 @@ Firebase Remote Config rules и provider quotas.
 
 | Path/output | Source/regeneration | Rule |
 |---|---|---|
-| `graphql_extracted/` | extracted GraphQL corpus; точная extraction command требует проверки в истории/исходном исследовательском проекте | не редактировать массово вручную; отдельный generated commit |
+| `backend/graphql/` | необходимые runtime queries из прежней исследовательской выгрузки | сохранять fragments внутри каждого документа; проверять backend tests |
 | `src/data/movies.json` | `yarn seo:fetch` / weekly CI | generated catalog; review size/schema |
 | `public/sitemap.xml`, `public/robots.txt` | `yarn seo:assets` or `yarn seo:prepare` | не смешивать с runtime changes |
-| root `sitemap.xml` | legacy/static duplicate; active regeneration relationship требует проверки | не синхронизировать вручную без выяснения consumer |
 | `public/icons/*.png` | `yarn icons` | generated binary assets отдельным commit |
 | `dist/`, service worker/workbox output | `yarn build` | build artifact, не редактировать/не коммитить |
 | `node_modules/`, `__pycache__/`, local DB/logs | package/runtime tools | никогда не редактировать и не включать в review |

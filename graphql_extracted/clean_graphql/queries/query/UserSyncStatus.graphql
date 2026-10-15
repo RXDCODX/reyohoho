@@ -1,5 +1,0 @@
-query UserSyncStatus {
-  userSyncStatus {
-    status
-  }
-}

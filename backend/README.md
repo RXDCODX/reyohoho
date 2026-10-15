@@ -3,6 +3,10 @@
 Sanic API with PostgreSQL persistence, JWT authentication and the catalog providers from
 `kinoserver.py`.
 
+The 13 Kinopoisk GraphQL documents used by the providers are bundled in `backend/graphql/`.
+Each document includes its fragments. The backend and its Docker image do not require the
+original `graphql_extracted/` research corpus. Add any new provider query to this directory.
+
 ## Local development
 
 ```powershell

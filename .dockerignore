@@ -18,6 +18,7 @@ dist
 dist-ssr
 coverage
 reports-browser
+graphql_extracted
 reports-lighthouse*.json
 
 __pycache__

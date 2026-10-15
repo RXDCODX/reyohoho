@@ -1,7 +1,0 @@
-fragment PersonImagesCount on Person {
-  imagesCount: images(limit: 0) {
-    total
-    __typename
-  }
-  __typename
-}

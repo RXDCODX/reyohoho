@@ -17,10 +17,7 @@ from pydantic import BaseModel, Field
 
 
 BASE_DIR = Path(__file__).resolve().parent
-OPERATIONS_DIRS = (
-    BASE_DIR / "clean_graphql" / "queries" / "query",
-    BASE_DIR.parent / "graphql_extracted" / "clean_graphql" / "queries" / "query",
-)
+OPERATIONS_DIR = BASE_DIR / "graphql"
 GRAPHQL_URL = "https://graphql.kinopoisk.ru/graphql/"
 REQUEST_HEADERS = {"service-id": "25"}
 logger = logging.getLogger(__name__)
@@ -89,12 +86,10 @@ class GraphQLError(RuntimeError):
 def operation_path(operation_name: str) -> Path:
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", operation_name):
         raise RuntimeError(f"invalid GraphQL operation name: {operation_name!r}")
-    for operations_dir in OPERATIONS_DIRS:
-        candidate = operations_dir / f"{operation_name}.graphql"
-        if candidate.is_file():
-            return candidate
-    searched = ", ".join(str(path) for path in OPERATIONS_DIRS)
-    raise RuntimeError(f"operation {operation_name!r} not found in: {searched}")
+    candidate = OPERATIONS_DIR / f"{operation_name}.graphql"
+    if candidate.is_file():
+        return candidate
+    raise RuntimeError(f"operation {operation_name!r} not found in: {OPERATIONS_DIR}")
 
 
 @lru_cache(maxsize=64)

@@ -1,5 +1,0 @@
-query DeviceProfileGetId($specification: DeviceSpecificationInput!) {
-  deviceProfile(specification: $specification) {
-    profileId
-  }
-}

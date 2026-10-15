@@ -67,12 +67,17 @@ async def test_imdb_mapping_uses_wikidata(monkeypatch):
         "MovieMobileDetailsRecommendedMovies",
         "MovieDetailsMobileTrailers",
         "MovieDetailsMobileMainCrewMembers",
+        "SuggestSearch",
+        "FilmSimilarMovies",
+        "MovieMobileDetailsTrailers",
+        "MovieUsersReviews",
+        "MovieTouchListPage",
     ],
 )
 def test_required_graphql_operations_are_resolvable(operation_name):
     path = operation_path(operation_name)
 
-    assert path == Path(path)
+    assert path.parent == Path(__file__).resolve().parents[1] / "graphql"
     assert path.name == f"{operation_name}.graphql"
     assert f"query {operation_name}" in operation_document(operation_name)
 
