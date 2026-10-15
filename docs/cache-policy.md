@@ -9,6 +9,16 @@
   run with `--apply`. Never commit the token. Unrelated rules are preserved.
 - Successful hashed assets: edge 30 days, browser 1 year (`immutable`). Errors
   do not get that TTL. Frontend must be deployed before testing these paths.
+- PWA installation precaches the entry shell and static dependencies of search,
+  top movies, movie details, player, ratings and the not-found screen. The client
+  build graph is retained for the final service worker generated after SSG, so
+  the cached HTML revision matches the prerendered output. Fonts and essential
+  icons are included; optional routes, comments and player dialogs are excluded.
+- Optional hashed assets are cached on first use in `immutable-assets-v1`:
+  same-origin successful responses only, at most 160 entries for 30 days. Those
+  screens and controls become available offline after an online visit. Comments
+  load near the viewport or on request; the player chooser loads when opened.
+  Service worker caching does not include API responses or account data.
 - Worker: movie cards 6h, search 10m, top 1h, players 1m. Only validated JSON is
   stored. Last successful movie cards can be served for up to 48h after fetch
   when upstream returns 429/5xx or a connection/timeout error. Stale storage

@@ -473,7 +473,7 @@
         </div>
 
         <div v-if="clientReady && isCommentsEnabled" id="movie-comments" class="comments-section">
-          <Comments :key="kp_id" :movie-id="kp_id" />
+          <DeferredComments :key="kp_id" :movie-id="kp_id" />
         </div>
 
         <Teleport defer to="#movie-staff-end">
@@ -993,7 +993,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useHead } from '@unhead/vue'
 import Notification from '@/components/notification/ToastMessage.vue'
 import { useTrailerStore } from '@/store/trailer'
-import Comments from '@/components/Comments.vue'
+import DeferredComments from '@/components/DeferredComments.vue'
 import { getRatingColor } from '@/utils/ratingUtils'
 import { buildMovieSeo, getMovieSeoEntry, getMovieSeoPath, getMovieSeoSlug } from '@/utils/movieSeo'
 import { optimizePosterUrl, resolvePosterByMovie } from '@/utils/mediaUtils'

@@ -12,27 +12,52 @@ assert(sw.includes(revision), 'SW must precache the final SSG HTML revision')
 const updatedIndex = Buffer.from(index.toString() + '<!-- artifact-update-B -->')
 const updatedRevision = crypto.createHash('md5').update(updatedIndex).digest('hex')
 let serveUpdate = false
-const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2' }
+const mime = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.webmanifest': 'application/manifest+json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf'
+}
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
     let target = path.resolve(dist, '.' + pathname)
-    if (target !== dist && !target.startsWith(dist + path.sep)) { res.writeHead(403).end(); return }
-    try { if ((await fs.stat(target)).isDirectory()) target = path.join(target, 'index.html') }
-    catch { target = path.join(dist, 'index.html') }
+    if (target !== dist && !target.startsWith(dist + path.sep)) {
+      res.writeHead(403).end()
+      return
+    }
+    try {
+      if ((await fs.stat(target)).isDirectory()) target = path.join(target, 'index.html')
+    } catch {
+      target = path.join(dist, 'index.html')
+    }
     let body = await fs.readFile(target)
     if (serveUpdate && target === path.join(dist, 'index.html')) body = updatedIndex
     if (serveUpdate && target === path.join(dist, 'sw.js'))
       body = Buffer.from(sw.replaceAll(revision, updatedRevision))
-    res.writeHead(200, { 'Content-Type': mime[path.extname(target)] || 'application/octet-stream', 'Cache-Control': 'no-store' })
+    res.writeHead(200, {
+      'Content-Type': mime[path.extname(target)] || 'application/octet-stream',
+      'Cache-Control': 'no-store'
+    })
     res.end(body)
-  } catch { res.writeHead(404).end() }
+  } catch {
+    res.writeHead(404).end()
+  }
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const origin = 'http://127.0.0.1:' + server.address().port
 let browser
 try {
-  browser = await chromium.launch({ headless: true, ...(process.platform === 'win32' ? { channel: 'msedge' } : {}) })
+  browser = await chromium.launch({
+    headless: true,
+    ...(process.platform === 'win32' ? { channel: 'msedge' } : {})
+  })
   const context = await browser.newContext({ serviceWorkers: 'allow' })
   const requests = []
   await context.route('**/*', (route) => {
@@ -49,19 +74,67 @@ try {
   await cards.first().waitFor()
   const cardCount = await cards.count()
   assert(cardCount > 0, 'SSG cards must remain visible with the API offline')
-  assert(!requests.some((url) => url.includes('/kinopoisk/top') && new URL(url, origin).searchParams.get('limit') === '36'), 'client must reuse the SSG list: ' + JSON.stringify(requests))
+  assert(
+    !requests.some(
+      (url) =>
+        url.includes('/kinopoisk/top') && new URL(url, origin).searchParams.get('limit') === '36'
+    ),
+    'client must reuse the SSG list: ' + JSON.stringify(requests)
+  )
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready
     if (!navigator.serviceWorker.controller)
-      await new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }))
+      await new Promise((resolve) =>
+        navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
+      )
   })
+  const precacheUrls = await page.evaluate(async () => {
+    const keys = await caches.keys()
+    const precache = await caches.open(keys.find((key) => key.includes('precache')))
+    return (await precache.keys()).map(({ url }) => new URL(url).pathname)
+  })
+  assert(
+    !precacheUrls.some((url) =>
+      ['Comments', 'PlayerModal', 'Settings'].some((name) => url.includes('/' + name + '-'))
+    ),
+    'optional comments, dialogs and routes must not enter the initial precache'
+  )
+  await page.goto(origin + '/settings/', { waitUntil: 'domcontentloaded' })
+  await page.locator('.settings-page').waitFor()
+  await page.waitForFunction(async () => {
+    const cache = await caches.open('immutable-assets-v1')
+    const urls = (await cache.keys()).map(({ url }) => new URL(url).pathname)
+    return (
+      urls.some((url) => url.includes('/Settings-') && url.endsWith('.js')) &&
+      urls.some((url) => url.includes('/Settings-') && url.endsWith('.css'))
+    )
+  })
+  const runtimeUrls = await page.evaluate(async () =>
+    (await (await caches.open('immutable-assets-v1')).keys()).map(
+      ({ url }) => new URL(url).pathname
+    )
+  )
+  assert(
+    runtimeUrls.every((url) => url.startsWith('/assets/immutable/')),
+    'runtime cache must contain only immutable local assets'
+  )
   await context.setOffline(true)
+  await page.goto(origin + '/settings/', { waitUntil: 'domcontentloaded' })
+  await page.locator('.settings-page').waitFor()
   await page.goto(origin + '/top/', { waitUntil: 'domcontentloaded' })
+  await page.locator('.top-100-page').waitFor()
   await page.locator('#app').waitFor()
-  assert((await page.locator('#app').textContent()).trim().length > 0, 'offline top route must render the shell')
+  assert(
+    (await page.locator('#app').textContent()).trim().length > 0,
+    'offline top route must render the shell'
+  )
   await page.goto(origin + '/movie/301/matrix/', { waitUntil: 'domcontentloaded' })
+  await page.locator('.movie-info').waitFor()
   await page.locator('#app').waitFor()
-  assert((await page.locator('#app').textContent()).trim().length > 0, 'offline deep route must render the shell')
+  assert(
+    (await page.locator('#app').textContent()).trim().length > 0,
+    'offline deep route must render the shell'
+  )
   await context.setOffline(false)
   serveUpdate = true
   await page.evaluate(async () => {
@@ -71,19 +144,51 @@ try {
     if (navigator.serviceWorker.controller !== previousController) return
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('SW update did not activate')), 15000)
-      navigator.serviceWorker.addEventListener('controllerchange', () => { clearTimeout(timer); resolve() }, { once: true })
+      navigator.serviceWorker.addEventListener(
+        'controllerchange',
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        { once: true }
+      )
     })
   })
   await context.setOffline(true)
   // The app reloads existing tabs on controllerchange; probe with a fresh tab.
   const updatePage = await context.newPage()
   updatePage.on('pageerror', (error) => errors.push(error.message))
-  const updatedNavigation = await updatePage.goto(origin + '/artifact-update-probe/', { waitUntil: 'domcontentloaded' })
+  const updatedNavigation = await updatePage.goto(origin + '/artifact-update-probe/', {
+    waitUntil: 'domcontentloaded'
+  })
   await updatePage.locator('#app').waitFor()
-  assert(updatedNavigation.fromServiceWorker(), 'offline update must be served by the service worker')
-  assert((await updatedNavigation.text()).includes('artifact-update-B'), 'offline navigation must use the updated precached shell')
+  assert(
+    updatedNavigation.fromServiceWorker(),
+    'offline update must be served by the service worker'
+  )
+  assert(
+    (await updatedNavigation.text()).includes('artifact-update-B'),
+    'offline navigation must use the updated precached shell'
+  )
   assert.equal(errors.length, 0, JSON.stringify(errors))
-  console.log(JSON.stringify({ artifact: dist, finalShellRevision: revision, ssgCards: cardCount, offlineTop: true, offlineDeepRoute: true, offlineShellUpdate: true, pageErrors: errors }, null, 2))
+  console.log(
+    JSON.stringify(
+      {
+        artifact: dist,
+        finalShellRevision: revision,
+        ssgCards: cardCount,
+        shellPrecacheEntries: precacheUrls.length,
+        optionalRoutesCachedOnUse: true,
+        offlineVisitedSettings: true,
+        offlineTop: true,
+        offlineDeepRoute: true,
+        offlineShellUpdate: true,
+        pageErrors: errors
+      },
+      null,
+      2
+    )
+  )
 } finally {
   await browser?.close()
   await new Promise((resolve) => server.close(resolve))

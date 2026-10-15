@@ -558,7 +558,6 @@ import { usePlayerStore } from '@/store/player'
 import { USER_LIST_TYPES_ENUM } from '@/constants'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import PlayerModal from '@/components/PlayerModal.vue'
 import PlayerSelectorBar from '@/components/player/PlayerSelectorBar.vue'
 import { parseTimingTextToSeconds, formatSecondsToTime } from '@/utils/dateUtils'
 import { OBSWebSocket } from '@/utils/obsWebSocket'
@@ -592,6 +591,7 @@ import {
 } from '@/utils/playerOverlayStyles'
 
 const PlayerSourceModal = defineAsyncComponent(() => import('@/components/player/PlayerSourceModal.vue'))
+const PlayerModal = defineAsyncComponent(() => import('@/components/PlayerModal.vue'))
 
 const mainStore = useMainStore()
 const playerStore = usePlayerStore()
