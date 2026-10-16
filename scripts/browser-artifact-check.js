@@ -11,6 +11,8 @@ const revision = crypto.createHash('md5').update(index).digest('hex')
 assert(sw.includes(revision), 'SW must precache the final SSG HTML revision')
 const updatedIndex = Buffer.from(index.toString() + '<!-- artifact-update-B -->')
 const updatedRevision = crypto.createHash('md5').update(updatedIndex).digest('hex')
+// /api/ bypasses the SW navigation fallback, so this document never boots the app.
+const updateHelperPath = '/api/artifact-sw-update-helper.html'
 let serveUpdate = false
 const mime = {
   '.html': 'text/html',
@@ -27,6 +29,11 @@ const mime = {
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
+    if (pathname === updateHelperPath) {
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' })
+      res.end('<!doctype html><meta charset="utf-8"><title>SW update helper</title>')
+      return
+    }
     let target = path.resolve(dist, '.' + pathname)
     if (target !== dist && !target.startsWith(dist + path.sep)) {
       res.writeHead(403).end()
@@ -95,9 +102,20 @@ try {
   })
   assert(
     !precacheUrls.some((url) =>
-      ['Comments', 'PlayerModal', 'Settings'].some((name) => url.includes('/' + name + '-'))
+      [
+        'Comments',
+        'PlayerModal',
+        'Settings',
+        'MovieSceneTools',
+        'obsWebSocket',
+        'playerVideoOverlayRuntime'
+      ].some((name) => url.includes('/' + name + '-'))
     ),
-    'optional comments, dialogs and routes must not enter the initial precache'
+    'optional comments, dialogs, routes and movie tools must not enter the initial precache'
+  )
+  assert(
+    precacheUrls.some((url) => url.includes('/workbox-window') && url.endsWith('.js')),
+    'Workbox registration client must be precached for offline app startup'
   )
   await page.goto(origin + '/settings/', { waitUntil: 'domcontentloaded' })
   await page.locator('.settings-page').waitFor()
@@ -136,24 +154,52 @@ try {
     'offline deep route must render the shell'
   )
   await context.setOffline(false)
-  serveUpdate = true
-  await page.evaluate(async () => {
-    const registration = await navigator.serviceWorker.ready
-    const previousController = navigator.serviceWorker.controller
-    await registration.update()
-    if (navigator.serviceWorker.controller !== previousController) return
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('SW update did not activate')), 15000)
-      navigator.serviceWorker.addEventListener(
-        'controllerchange',
-        () => {
-          clearTimeout(timer)
-          resolve()
-        },
-        { once: true }
-      )
+  const updateHelper = await context.newPage()
+  updateHelper.on('pageerror', (error) => errors.push(error.message))
+  try {
+    const helperNavigation = await updateHelper.goto(origin + updateHelperPath, {
+      waitUntil: 'domcontentloaded'
     })
-  })
+    assert(
+      helperNavigation && !helperNavigation.fromServiceWorker(),
+      'SW update helper must bypass the app shell navigation fallback'
+    )
+    serveUpdate = true
+    await updateHelper.evaluate(async () => {
+      const serviceWorker = navigator.serviceWorker
+      const previousController = serviceWorker.controller
+      if (!previousController) throw new Error('SW update helper must already be controlled')
+      let onControllerChange
+      let timer
+      const controllerChanged = new Promise((resolve) => {
+        onControllerChange = () => {
+          if (serviceWorker.controller && serviceWorker.controller !== previousController) resolve()
+        }
+        serviceWorker.addEventListener('controllerchange', onControllerChange)
+      })
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('SW update did not activate within 15000 ms')),
+          15000
+        )
+      })
+      try {
+        // Listen before update(), and bound readiness, the update request and activation.
+        await Promise.race([
+          Promise.all([
+            serviceWorker.ready.then((registration) => registration.update()),
+            controllerChanged
+          ]),
+          timeout
+        ])
+      } finally {
+        clearTimeout(timer)
+        serviceWorker.removeEventListener('controllerchange', onControllerChange)
+      }
+    })
+  } finally {
+    await updateHelper.close()
+  }
   await context.setOffline(true)
   // The app reloads existing tabs on controllerchange; probe with a fresh tab.
   const updatePage = await context.newPage()

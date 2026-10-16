@@ -29,11 +29,20 @@ describe('offline shell dependency selection', () => {
       ...extra
     })
     const bundle = {
-      'entry.js': chunk('entry.js', ['shared.js'], { isEntry: true }),
+      'entry.js': chunk('entry.js', ['shared.js'], {
+        isEntry: true,
+        dynamicImports: ['workbox.js']
+      }),
       'shared.js': chunk('shared.js', ['entry.js']),
+      'workbox.js': chunk('workbox.js', ['workbox-helper.js'], {
+        modules: {
+          'C:\\repo\\node_modules\\workbox-window\\build\\workbox-window.prod.es5.mjs': {}
+        }
+      }),
+      'workbox-helper.js': chunk('workbox-helper.js'),
       'movie.js': chunk('movie.js', ['shared.js'], {
         facadeModuleId: 'C:\\repo\\src\\components\\MovieInfo.vue',
-        dynamicImports: ['comments.js', 'dialog.js'],
+        dynamicImports: ['comments.js', 'dialog.js', 'scenes.js', 'obs.js', 'overlay.js'],
         viteMetadata: {
           importedCss: new Set(['movie.css']),
           importedAssets: new Set(['poster.webp'])
@@ -41,6 +50,13 @@ describe('offline shell dependency selection', () => {
       }),
       'comments.js': chunk('comments.js'),
       'dialog.js': chunk('dialog.js'),
+      'scenes.js': chunk('scenes.js', [], {
+        facadeModuleId: '/repo/src/components/movie/MovieSceneTools.vue'
+      }),
+      'obs.js': chunk('obs.js', [], { facadeModuleId: '/repo/src/utils/obsWebSocket.js' }),
+      'overlay.js': chunk('overlay.js', [], {
+        facadeModuleId: '/repo/src/utils/playerVideoOverlayRuntime.js'
+      }),
       'settings.js': chunk('settings.js', [], {
         facadeModuleId: '/repo/src/components/Settings.vue'
       })
@@ -70,12 +86,17 @@ describe('offline shell dependency selection', () => {
       'icons/icon-72x72.png',
       'entry.js',
       'shared.js',
+      'workbox.js',
+      'workbox-helper.js',
       'movie.js',
       'movie.css',
       'poster.webp',
       'comments.js',
       'comments.css',
       'dialog.js',
+      'scenes.js',
+      'obs.js',
+      'overlay.js',
       'settings.js',
       'unrelated.png',
       'personal.json',
@@ -91,6 +112,8 @@ describe('offline shell dependency selection', () => {
       'icons/icon-512x512.png',
       'entry.js',
       'shared.js',
+      'workbox.js',
+      'workbox-helper.js',
       'movie.js',
       'movie.css',
       'poster.webp'

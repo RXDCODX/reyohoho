@@ -9,6 +9,8 @@ class OBSWebSocket {
     this.sources = new Map()
     this.filtersFound = new Map()
     this.pendingRequests = new Map()
+    this.blurTestTimers = new Set()
+    this.connectionReject = null
     this.callbacks = {
       onConnect: null,
       onDisconnect: null,
@@ -16,8 +18,6 @@ class OBSWebSocket {
       onFiltersFound: null,
       onError: null
     }
-
-    this.BLUR_FILTER_NAME = 'reyohoho'
   }
 
   generateMessageId() {
@@ -29,56 +29,79 @@ class OBSWebSocket {
   }
 
   async connect(host = 'localhost', port = 4455, password = '') {
+    this.disconnect()
     return new Promise((resolve, reject) => {
       const url = `ws://${host}:${port}`
       debugLog(`Connecting to OBS WebSocket at ${url}`)
-      this.ws = new WebSocket(url)
+      const socket = new WebSocket(url)
+      this.ws = socket
+      this.password = password
+      this.connectionReject = reject
+      const isCurrent = () => this.ws === socket
+      const fail = (error) => {
+        if (!isCurrent()) return
+        this.callbacks.onError?.(error.message || 'Connection error')
+        this.disconnect()
+        this.callbacks.onDisconnect?.()
+        reject(error)
+      }
 
-      this.ws.onopen = async () => {
+      socket.onopen = async () => {
+        if (!isCurrent()) return
         debugLog('WebSocket connection opened')
         try {
           const authResponse = await this.authenticate(password)
+          if (!isCurrent()) return
           debugLog('Authentication response:', authResponse)
           if (authResponse.success) {
             debugLog('Successfully authenticated to OBS')
+            this.connectionReject = null
             this.callbacks.onConnect?.()
             this.loadSourcesAndSearchFilters()
             resolve()
           } else {
-            console.error('Authentication failed')
-            reject(new Error('Authentication failed'))
+            fail(new Error('Authentication failed'))
           }
         } catch (error) {
-          console.error('Error during authentication:', error)
-          reject(error)
+          fail(error)
         }
       }
 
-      this.ws.onmessage = (event) => {
-        this.handleMessage(JSON.parse(event.data))
+      socket.onmessage = async (event) => {
+        if (!isCurrent()) return
+        try {
+          await this.handleMessage(JSON.parse(event.data))
+        } catch (error) {
+          fail(error)
+        }
       }
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (!isCurrent()) return
         debugLog('WebSocket connection closed')
+        this.disconnect()
         this.callbacks.onDisconnect?.()
       }
 
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        this.callbacks.onError?.(error.message || 'Connection error')
-        reject(error)
+      socket.onerror = (error) => {
+        fail(new Error(error.message || 'Connection error'))
       }
     })
   }
 
   disconnect() {
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
-    }
+    const socket = this.ws
+    this.ws = null
+    this.isConnected = false
+    this.isAuthenticated = false
+    this.connectionReject?.(new Error('Connection closed'))
+    this.connectionReject = null
+    this.authResolve?.({ success: false })
+    this.authResolve = null
 
     if (this.pendingRequests) {
-      for (const [, { reject }] of this.pendingRequests.entries()) {
+      for (const { reject, timer } of this.pendingRequests.values()) {
+        clearTimeout(timer)
         reject(new Error('Connection closed'))
       }
       this.pendingRequests.clear()
@@ -86,6 +109,15 @@ class OBSWebSocket {
 
     this.sources.clear()
     this.filtersFound.clear()
+    for (const timer of this.blurTestTimers) clearTimeout(timer)
+    this.blurTestTimers.clear()
+    if (socket) {
+      socket.onopen = null
+      socket.onmessage = null
+      socket.onclose = null
+      socket.onerror = null
+      socket.close()
+    }
   }
 
   sendRequest(requestType, requestData = {}) {
@@ -108,24 +140,27 @@ class OBSWebSocket {
 
       debugLog(`Sending OBS request: ${requestType}`, requestData)
 
-      this.pendingRequests.set(requestId, { resolve, reject })
-
-      this.ws.send(JSON.stringify(request))
-
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pendingRequests && this.pendingRequests.has(requestId)) {
           this.pendingRequests.delete(requestId)
           reject(new Error(`Request ${requestType} timed out`))
         }
       }, 10000)
+      this.pendingRequests.set(requestId, { resolve, reject, timer })
+      try {
+        this.ws.send(JSON.stringify(request))
+      } catch (error) {
+        clearTimeout(timer)
+        this.pendingRequests.delete(requestId)
+        reject(error)
+      }
     })
   }
 
   handleMessage(message) {
     switch (message.op) {
       case 0: // Hello
-        this.handleHello(message.d)
-        break
+        return this.handleHello(message.d)
       case 2: // Identified
         this.handleIdentified()
         break
@@ -148,6 +183,7 @@ class OBSWebSocket {
   }
 
   async handleHello(data) {
+    const socket = this.ws
     debugLog('Received OBS hello')
     this.isConnected = true
 
@@ -178,11 +214,12 @@ class OBSWebSocket {
 
         identify.d.authentication = authResponse
       } catch (error) {
-        console.error('Authentication error:', error)
+        throw new Error(`Authentication error: ${error.message}`)
       }
     }
 
-    this.ws.send(JSON.stringify(identify))
+    // Hashing can outlive a route change or a replacement connection.
+    if (this.ws === socket && socket) socket.send(JSON.stringify(identify))
   }
 
   handleIdentified() {
@@ -216,6 +253,7 @@ class OBSWebSocket {
     }
 
     this.pendingRequests.delete(requestId)
+    clearTimeout(pendingRequest.timer)
 
     if (requestStatus.result) {
       debugLog(`Request ${requestType} successful`, responseData)
@@ -224,33 +262,6 @@ class OBSWebSocket {
       console.error(`Request ${requestType} failed:`, requestStatus.comment)
       pendingRequest.reject(new Error(`${requestType} failed: ${requestStatus.comment}`))
     }
-  }
-
-  handleFilterListResponse(responseData) {
-    const sourceName = responseData.sourceName
-    const filters = responseData.filters || []
-
-    const blurFilter = filters.find(
-      (filter) => filter.filterName.toLowerCase() === this.BLUR_FILTER_NAME.toLowerCase()
-    )
-
-    if (blurFilter) {
-      this.foundFilters.set(sourceName, {
-        sourceName: sourceName,
-        filterName: blurFilter.filterName,
-        enabled: blurFilter.filterEnabled
-      })
-      debugLog(`Found reyohoho filter in source: ${sourceName}`)
-    }
-
-    this.checkSearchComplete()
-  }
-
-  checkSearchComplete() {
-    setTimeout(() => {
-      debugLog(`Search complete. Found ${this.foundFilters.size} reyohoho filters`)
-      this.callbacks.onFiltersFound?.(Array.from(this.foundFilters.values()))
-    }, 500)
   }
 
   handleEvent(data) {
@@ -270,6 +281,8 @@ class OBSWebSocket {
   }
 
   async loadSourcesAndSearchFilters() {
+    const socket = this.ws
+    const isCurrent = () => this.ws === socket && socket !== null
     try {
       debugLog('Loading sources and searching for filters...')
 
@@ -277,11 +290,14 @@ class OBSWebSocket {
         const version = await this.sendRequest('GetVersion')
         debugLog('OBS version info:', version)
       } catch (error) {
+        if (!isCurrent()) return
         console.warn('Could not get OBS version:', error)
       }
+      if (!isCurrent()) return
 
       debugLog('Requesting scene list...')
       const scenes = await this.sendRequest('GetSceneList')
+      if (!isCurrent()) return
       debugLog('Raw scenes response:', scenes)
 
       if (!scenes || !scenes.scenes) {
@@ -294,6 +310,7 @@ class OBSWebSocket {
 
       debugLog('Requesting input list...')
       const inputs = await this.sendRequest('GetInputList')
+      if (!isCurrent()) return
       debugLog('Raw inputs response:', inputs)
 
       if (!inputs || !inputs.inputs) {
@@ -322,6 +339,7 @@ class OBSWebSocket {
               })
 
               await this.searchFiltersInSource(item.sourceName, scene.sceneName)
+              if (!isCurrent()) return
             }
           }
         }
@@ -338,6 +356,7 @@ class OBSWebSocket {
         }
 
         await this.searchFiltersInSource(input.inputName, 'Direct Input')
+        if (!isCurrent()) return
       }
 
       const foundFilters = Array.from(this.filtersFound.values())
@@ -351,6 +370,7 @@ class OBSWebSocket {
       this.callbacks.onFiltersFound?.(foundFilters)
       this.callbacks.onSourcesUpdated?.(Array.from(this.sources.values()))
     } catch (error) {
+      if (!isCurrent()) return
       console.error('Error loading sources:', error)
       console.error('Error stack:', error.stack)
       this.callbacks.onError?.(`Error loading sources: ${error.message}`)
@@ -358,11 +378,13 @@ class OBSWebSocket {
   }
 
   async searchFiltersInSource(sourceName, sceneName) {
+    const socket = this.ws
     try {
       debugLog(`Searching filters in source: ${sourceName}`)
       const response = await this.sendRequest('GetSourceFilterList', {
         sourceName: sourceName
       })
+      if (this.ws !== socket || !socket) return
 
       debugLog(`Source ${sourceName} has ${response.filters.length} filters`)
       for (const filter of response.filters) {
@@ -380,6 +402,7 @@ class OBSWebSocket {
         })
       }
     } catch (error) {
+      if (this.ws !== socket) return
       console.warn(`Could not get filters for source ${sourceName}:`, error)
     }
   }
@@ -440,10 +463,14 @@ class OBSWebSocket {
       return
     }
 
+    const socket = this.ws
     await this.enableBlur(selectedFilterId)
-    setTimeout(() => {
-      this.disableBlur(selectedFilterId)
+    if (this.ws !== socket || !socket) return
+    const timer = setTimeout(() => {
+      this.blurTestTimers.delete(timer)
+      if (this.ws === socket) this.disableBlur(selectedFilterId)
     }, duration)
+    this.blurTestTimers.add(timer)
   }
 
   getFilterById(filterId) {

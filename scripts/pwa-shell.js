@@ -10,7 +10,7 @@ const shellFiles = new Set([
   'icons/icon-512x512.png'
 ])
 
-// Keep the static dependencies of the offline entry screens, not every lazy route.
+// Keep the offline screens and SW registration client, not every lazy feature.
 export function createPwaShell() {
   let graphPath
   let isSsr = false
@@ -39,7 +39,12 @@ export function createPwaShell() {
         for (const entry of Object.values(bundle)) {
           if (
             entry.type === 'chunk' &&
-            (entry.isEntry || screens.test(entry.facadeModuleId?.replaceAll('\\', '/') || ''))
+            (entry.isEntry ||
+              screens.test(entry.facadeModuleId?.replaceAll('\\', '/') || '') ||
+              // registerSW imports this client on idle, including on offline reloads.
+              Object.keys(entry.modules || {}).some((id) =>
+                id.replaceAll('\\', '/').includes('/node_modules/workbox-window/')
+              ))
           )
             visit(entry.fileName)
         }

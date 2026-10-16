@@ -32,7 +32,8 @@ try {
     for (const build of baselineRoot ? ['before', 'after'] : ['after']) {
       console.log(`Checking deferred controls: ${width}/${build}`)
       const context = await browser.newContext({
-        viewport: { width, height: 844 },
+        // Keep comments outside the 300px observer margin even on this short fixture.
+        viewport: { width, height: 640 },
         serviceWorkers: 'block'
       })
       try {
@@ -70,9 +71,20 @@ try {
         if (build === 'after') {
           assert.equal(initialCommentRequests, 0, 'offscreen comments must not fetch data')
           assert(
-            !initialResources.some(({ path }) => /\/(?:Comments|PlayerModal)-/.test(path)),
-            'comments and player dialog must not load before use'
+            !initialResources.some(({ path }) =>
+              /\/(?:Comments|PlayerModal|MovieSceneTools|obsWebSocket|playerVideoOverlayRuntime)-/.test(
+                path
+              )
+            ),
+            'optional movie and desktop tools must not load before use'
           )
+          await page.locator('button[title^="Показать тайминги"]').click()
+          await page.getByText('Записей о таймингах не найдено').waitFor()
+          const sceneResources = await resources(page)
+          assert(sceneResources.some(({ path }) => /\/MovieSceneTools-.*\.js$/.test(path)))
+          assert(sceneResources.some(({ path }) => /\/MovieSceneTools-.*\.css$/.test(path)))
+          await page.mouse.click(2, 638)
+          await page.locator('.nudity-info-popup').waitFor({ state: 'hidden' })
           await page.locator('#movie-comments').scrollIntoViewIfNeeded()
           await page.locator('.spoiler-warning').waitFor()
           await page.waitForTimeout(300)

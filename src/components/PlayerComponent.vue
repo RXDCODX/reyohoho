@@ -67,7 +67,10 @@
       <button
         v-show="theaterMode"
         class="close-theater-btn"
-        :class="{ visible: closeButtonVisible, hiding: theaterMode && !closeButtonVisible && closeButtonWasVisible }"
+        :class="{
+          visible: closeButtonVisible,
+          hiding: theaterMode && !closeButtonVisible && closeButtonWasVisible
+        }"
         aria-label="Выйти из театрального режима"
         @click="toggleTheaterMode"
       >
@@ -169,7 +172,9 @@
                 :class="{ active: movieInfo?.lists?.isAbandoned }"
                 @click="toggleList(USER_LIST_TYPES_ENUM.ABANDONED)"
               >
-                <span class="material-icons">{{ movieInfo?.lists?.isAbandoned ? 'cancel' : 'not_interested' }}</span>
+                <span class="material-icons">{{
+                  movieInfo?.lists?.isAbandoned ? 'cancel' : 'not_interested'
+                }}</span>
                 <span class="button-label">Брошено</span>
               </button>
             </div>
@@ -551,46 +556,36 @@ import Notification from '@/components/notification/ToastMessage.vue'
 import SliderRound from '@/components/slider/SliderRound.vue'
 import { usePlayerElectronControls } from '@/composables/usePlayerElectronControls'
 import { usePlayerLayout } from '@/composables/usePlayerLayout'
+import { usePlayerOBS } from '@/composables/usePlayerOBS'
+import { usePlayerVideoOverlay } from '@/composables/usePlayerVideoOverlay'
 import { usePlayerSharing } from '@/composables/usePlayerSharing'
 import { usePlayerSources } from '@/composables/usePlayerSources'
 import { useMainStore } from '@/store/main'
 import { usePlayerStore } from '@/store/player'
 import { USER_LIST_TYPES_ENUM } from '@/constants'
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch
+} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PlayerSelectorBar from '@/components/player/PlayerSelectorBar.vue'
-import { parseTimingTextToSeconds, formatSecondsToTime } from '@/utils/dateUtils'
-import { OBSWebSocket } from '@/utils/obsWebSocket'
-import { debugLog } from '@/utils/logger'
 import { getProviderDisplayName } from '@/utils/playerUtils'
 import { trackAnalyticsEvent } from '@/utils/analytics'
-import { assessPlayerIframe, getPersistablePlayerKey, getSafePlayerUrl } from '@/utils/playerSecurity'
+import { debugLog } from '@/utils/logger'
 import {
-  applyOverlayButtonHoverStyle,
-  applyOverlayProgressBackgroundStyle,
-  applyOverlayTimingsBackgroundStyle,
-  applyOverlayTitleBackgroundStyle,
-  applyOverlayVisibilityStyle,
-  applySettingsButtonHoverStyle,
-  getControlsContainerStyle,
-  getDurationProgressMarkup,
-  getMainInfoStyle,
-  getMovieTitleStyle,
-  getObsStatusMarkup,
-  getOverlayBaseStyle,
-  getOverlayButtonStyle,
-  getOverlayPositionStyle,
-  getOverlaySettingsMarkup,
-  getSettingsModalContentStyle,
-  getSettingsModalStyle,
-  getTimingChipStyle,
-  getTimingsListStyle,
-  getTimingsContentStyle,
-  getTimingsPanelStyle,
-  getVideoProgressStyle
-} from '@/utils/playerOverlayStyles'
+  assessPlayerIframe,
+  getPersistablePlayerKey,
+  getSafePlayerUrl
+} from '@/utils/playerSecurity'
 
-const PlayerSourceModal = defineAsyncComponent(() => import('@/components/player/PlayerSourceModal.vue'))
+const PlayerSourceModal = defineAsyncComponent(
+  () => import('@/components/player/PlayerSourceModal.vue')
+)
 const PlayerModal = defineAsyncComponent(() => import('@/components/PlayerModal.vue'))
 
 const mainStore = useMainStore()
@@ -683,9 +678,6 @@ const { copyMovieLink } = usePlayerSharing({
 
 const tooltipContainer = ref(null)
 const tooltip = ref(null)
-const videoPositionInterval = ref(null)
-const overlayTimingsCheckInterval = ref(null)
-const lastOverlayTimingsCount = ref(0)
 
 const {
   compressorEnabled,
@@ -707,90 +699,17 @@ const {
   kpId: kp_id
 })
 
-const videoOverlayEnabled2 = computed({
-  get: () => playerStore.videoOverlayEnabled2,
-  set: (value) => playerStore.updateVideoOverlay(value)
+const obs = usePlayerOBS({ isElectron, playerStore })
+const videoOverlay = usePlayerVideoOverlay({
+  isElectron,
+  playerStore,
+  playerIframe,
+  props,
+  enableBlur,
+  disableBlur,
+  obs
 })
-
-const overlaySettings = computed({
-  get: () => playerStore.overlaySettings,
-  set: (value) => playerStore.updateOverlaySettings(value)
-})
-const currentVideoTime = ref(0)
-const totalVideoDuration = ref(0)
-const activeTimingTexts = ref([])
-const hasActiveTimings = ref(false)
-const videoOverlayManuallyHidden = ref(false)
-let hideTimingsTimeout = null
-
-const currentOverlayElement = ref(null)
-const overlayControlsTimeout = ref(null)
-const overlayCreationInProgress = ref(false)
-
-const shouldRenderVideoOverlay = () => {
-  return videoOverlayEnabled2.value && (!videoOverlayManuallyHidden.value || hasActiveTimings.value)
-}
-
-const getIframeFullscreenElement = (iframeDoc) => {
-  return (
-    iframeDoc?.fullscreenElement ||
-    iframeDoc?.webkitFullscreenElement ||
-    iframeDoc?.mozFullScreenElement ||
-    iframeDoc?.msFullscreenElement ||
-    null
-  )
-}
-
-const isIframeVideoFullscreen = (iframeDoc, video) => {
-  const fullscreenElement = getIframeFullscreenElement(iframeDoc)
-
-  return (
-    fullscreenElement === video ||
-    video?.webkitDisplayingFullscreen ||
-    (video?.offsetWidth === window.screen.width && video?.offsetHeight === window.screen.height)
-  )
-}
-
-const applyManualHiddenOverlayState = () => {
-  const overlay = currentOverlayElement.value
-  if (!overlay || !videoOverlayManuallyHidden.value || hasActiveTimings.value) {
-    return false
-  }
-
-  const mainInfo = overlay.children[0]
-  const timingsPanel = overlay.children[1]
-  const controlsContainer = overlay.children[2]
-
-  if (mainInfo) {
-    mainInfo.style.opacity = '0'
-  }
-
-  if (timingsPanel) {
-    applyOverlayVisibilityStyle(timingsPanel, false)
-  }
-
-  if (controlsContainer) {
-    applyOverlayVisibilityStyle(controlsContainer, false)
-  }
-
-  clearTimeout(hideTimingsTimeout)
-  hideTimingsTimeout = null
-  clearTimeout(overlayControlsTimeout.value)
-  overlayControlsTimeout.value = null
-
-  return true
-}
-
-// OBS WebSocket
-const obsWebSocket = ref(null)
-const obsConnected = ref(false)
-const obsSources = ref([])
-const obsFiltersFound = ref([])
-
-const obsSettings = computed({
-  get: () => playerStore.obsSettings,
-  set: (value) => playerStore.updateObsSettings(value)
-})
+const { videoOverlayEnabled2, toggleVideoOverlay } = videoOverlay
 
 const updateTooltipPosition = (tooltipName) => {
   const container = document.querySelector(`[data-tooltip-container="${tooltipName}"]`)
@@ -852,231 +771,6 @@ const isInAnyList = computed(() => {
     props.movieInfo?.lists?.isAbandoned
   )
 })
-
-const startVideoPositionMonitoring = (isDebug = false) => {
-  if (!isElectron.value) return
-
-  if (videoPositionInterval.value) {
-    clearInterval(videoPositionInterval.value)
-  }
-
-  let blurApplied = false
-  let blurAppliedWithObs = false
-  let blurIntervals = []
-
-  function updateBlurIntervals() {
-    blurIntervals = []
-    if (overlaySettings.value.autoBlurTimings === false) return
-
-    const selectedTimingIds = new Set([
-      ...(Array.isArray(window.selectedNudityTimings) ? window.selectedNudityTimings : []),
-      ...(Array.isArray(window.overlayNudityTimings) ? window.overlayNudityTimings : [])
-    ].map((id) => String(id)))
-
-    if (selectedTimingIds.size > 0 && props.movieInfo?.nudity_timings) {
-      for (const timing of props.movieInfo.nudity_timings) {
-        if (selectedTimingIds.has(String(timing.id))) {
-          const parsedRanges = parseTimingTextToSeconds(timing.timing_text)
-          if (parsedRanges && parsedRanges.length > 0) {
-            blurIntervals.push(...parsedRanges)
-          }
-        }
-      }
-    }
-  }
-
-  updateBlurIntervals()
-
-  videoPositionInterval.value = setInterval(() => {
-    if (!playerIframe.value) return
-
-    updateBlurIntervals()
-
-    try {
-      const iframe = playerIframe.value
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-      if (!iframeDoc) return
-
-      const videos = iframeDoc.querySelectorAll('video')
-      if (videos.length > 0) {
-        const video = videos[0]
-
-        currentVideoTime.value = video.currentTime || 0
-        totalVideoDuration.value = video.duration || 0
-
-        if (
-          isElectron.value &&
-          shouldRenderVideoOverlay() &&
-          !currentOverlayElement.value &&
-          !overlayCreationInProgress.value
-        ) {
-          const timeSinceLoad = Date.now() - (window.iframeLoadTime || 0)
-          if (timeSinceLoad >= 100) {
-            try {
-              createVideoOverlay(iframeDoc, video)
-            } catch (error) {
-              debugLog('Error creating overlay:', error)
-              overlayCreationInProgress.value = false
-            }
-          }
-        }
-
-        if (isElectron.value && !videoOverlayEnabled2.value && currentOverlayElement.value) {
-          setTimeout(() => {
-            if (!videoOverlayEnabled2.value && currentOverlayElement.value) {
-              removeVideoOverlay()
-            }
-          }, 100)
-        }
-
-        if (isElectron.value && props.movieInfo?.nudity_timings) {
-          const currentTime = video.currentTime
-          const selectedTimings = []
-          const activeTimingIds = []
-
-          if (
-            window.overlayNudityTimings &&
-            Array.isArray(window.overlayNudityTimings) &&
-            window.overlayNudityTimings.length > 0
-          ) {
-            for (const timing of props.movieInfo.nudity_timings) {
-              if (window.overlayNudityTimings.includes(timing.id)) {
-                const parsedRanges = parseTimingTextToSeconds(timing.timing_text)
-
-                if (parsedRanges && parsedRanges.length > 0) {
-                  const intervals = []
-
-                  for (const [start, end] of parsedRanges) {
-                    let status = 'normal'
-                    if (currentTime >= start && currentTime <= end) {
-                      status = 'active'
-                      activeTimingIds.push(timing.id)
-                    } else if (start > currentTime && start - currentTime <= 5) {
-                      status = 'upcoming'
-                    }
-
-                    intervals.push({
-                      text: `[${formatSecondsToTime(start)}-${formatSecondsToTime(end)}]`,
-                      status: status
-                    })
-                  }
-
-                  selectedTimings.push({
-                    id: timing.id,
-                    intervals: intervals
-                  })
-                }
-              }
-            }
-          }
-
-          activeTimingTexts.value = selectedTimings
-          hasActiveTimings.value =
-            activeTimingIds.length > 0 ||
-            selectedTimings.some((timing) =>
-              timing.intervals.some((interval) => interval.status === 'upcoming')
-            )
-        }
-
-        if (
-          isElectron.value &&
-          currentOverlayElement.value &&
-          videoOverlayManuallyHidden.value &&
-          !hasActiveTimings.value
-        ) {
-          applyManualHiddenOverlayState()
-        }
-
-        if (
-          isElectron.value &&
-          videoOverlayEnabled2.value &&
-          videoOverlayManuallyHidden.value &&
-          hasActiveTimings.value &&
-          !currentOverlayElement.value &&
-          !overlayCreationInProgress.value
-        ) {
-          try {
-            createVideoOverlay(iframeDoc, video)
-            updateVideoOverlay()
-          } catch (error) {
-            debugLog('Error recreating hidden overlay near timing:', error)
-            overlayCreationInProgress.value = false
-          }
-        }
-
-        if (isElectron.value && currentOverlayElement.value && shouldRenderVideoOverlay()) {
-          updateVideoOverlay()
-        }
-
-        if (!video.paused) {
-          const currentTime = video.currentTime
-          const duration = video.duration
-          const progress = duration > 0 ? (currentTime / duration) * 100 : 0
-
-          if (isDebug) {
-            debugLog(
-              `Video position: ${currentTime.toFixed(2)}s / ${duration.toFixed(2)}s (${progress.toFixed(1)}%)`
-            )
-
-            if (blurIntervals.length > 0) {
-              const activeIntervals = blurIntervals
-                .map(
-                  ([start, end]) => `${formatSecondsToTime(start)} - ${formatSecondsToTime(end)}`
-                )
-                .join(', ')
-              debugLog(`Active blur intervals: [${activeIntervals}]`)
-            }
-          }
-
-          let shouldBlur = false
-          for (const [start, end] of blurIntervals) {
-            if (currentTime >= start && currentTime <= end) {
-              shouldBlur = true
-              break
-            }
-          }
-
-          // Use OBS blur if enabled and connected, otherwise use internal blur
-          if (
-            obsSettings.value.enabled &&
-            obsConnected.value &&
-            obsSettings.value.selectedFilterId
-          ) {
-            // OBS blur logic
-            if (shouldBlur && !blurApplied) {
-              obsWebSocket.value?.enableBlur(obsSettings.value.selectedFilterId)
-              blurApplied = true
-              blurAppliedWithObs = true
-              debugLog('OBS Blur applied at', currentTime.toFixed(2), 'seconds')
-            } else if (!shouldBlur && blurApplied) {
-              obsWebSocket.value?.disableBlur(obsSettings.value.selectedFilterId)
-              blurApplied = false
-              blurAppliedWithObs = false
-              debugLog('OBS Blur removed at', currentTime.toFixed(2), 'seconds')
-            }
-          } else if (shouldBlur && !blurApplied && isElectron.value) {
-            // Internal blur logic
-            enableBlur()
-            blurApplied = true
-            blurAppliedWithObs = false
-            debugLog('Blur applied at', currentTime.toFixed(2), 'seconds')
-          } else if (!shouldBlur && blurApplied) {
-            if (blurAppliedWithObs) {
-              obsWebSocket.value?.disableBlur(obsSettings.value.selectedFilterId)
-            } else {
-              disableBlur()
-            }
-            blurApplied = false
-            blurAppliedWithObs = false
-            debugLog('Blur removed at', currentTime.toFixed(2), 'seconds')
-          }
-        }
-      }
-    } catch (error) {
-      debugLog('Error monitoring video position:', error)
-    }
-  }, 100)
-}
 
 const getPlayerAnalyticsPayload = () => ({
   kp_id: kp_id.value,
@@ -1264,25 +958,7 @@ const onIframeLoad = () => {
   }
   window.iframeLoadTime = Date.now()
   startMirrorMonitoring()
-  startVideoPositionMonitoring()
-
-  if (isElectron.value && shouldRenderVideoOverlay() && !currentOverlayElement.value) {
-    setTimeout(() => {
-      try {
-        const iframe = playerIframe.value
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-        if (iframeDoc) {
-          const video = iframeDoc.querySelector('video')
-          if (video && shouldRenderVideoOverlay()) {
-            createVideoOverlay(iframeDoc, video)
-          }
-        }
-      } catch (error) {
-        debugLog('Error creating overlay on iframe load:', error)
-        overlayCreationInProgress.value = false
-      }
-    }, 100)
-  }
+  void videoOverlay.onIframeLoad()
 }
 
 const onIframeError = () => {
@@ -1301,6 +977,11 @@ const onIframeError = () => {
   trackAnalyticsEvent('player_iframe_error', payload)
 }
 
+const resetPlayerPlayback = () => {
+  videoOverlay.resetPlayback()
+  resetElectronPlaybackState()
+}
+
 const handlePlayerSelect = (player) => {
   if (selectedPlayerInternal.value?.key === player.key) {
     closePlayerModal()
@@ -1309,31 +990,16 @@ const handlePlayerSelect = (player) => {
 
   selectedPlayerInternal.value = player
   iframeLoading.value = true
-  resetElectronPlaybackState()
-  if (currentOverlayElement.value) {
-    removeVideoOverlay()
-  }
-  if (videoPositionInterval.value) {
-    clearInterval(videoPositionInterval.value)
-    videoPositionInterval.value = null
-  }
   // Note: emit('update:selectedPlayer') is handled by the watcher on selectedPlayerInternal
   closePlayerModal()
 }
 
 watch(selectedPlayerInternal, (newVal) => {
+  resetPlayerPlayback()
   stopCurrentVideoErrorTracking()
   if (newVal) {
     iframeLoading.value = true
     scheduleIframeLoadTimeout()
-    resetElectronPlaybackState()
-    if (currentOverlayElement.value) {
-      removeVideoOverlay()
-    }
-    if (videoPositionInterval.value) {
-      clearInterval(videoPositionInterval.value)
-      videoPositionInterval.value = null
-    }
     emit('update:selectedPlayer', newVal)
   } else {
     clearIframeLoadTimeout()
@@ -1347,15 +1013,7 @@ watch(
       kp_id.value = newKpId
       iframeLoading.value = true
       selectedPlayerInternal.value = null
-      resetElectronPlaybackState()
-      if (currentOverlayElement.value) {
-        removeVideoOverlay()
-      }
-      if (videoPositionInterval.value) {
-        clearInterval(videoPositionInterval.value)
-        videoPositionInterval.value = null
-      }
-      lastOverlayTimingsCount.value = 0
+      resetPlayerPlayback()
       await fetchPlayers()
       if (isCentered.value) centerPlayer()
     }
@@ -1370,118 +1028,9 @@ watch(
 
     iframeLoading.value = true
     playerStore.clearPreferredPlayer()
-    resetElectronPlaybackState()
-    if (currentOverlayElement.value) {
-      removeVideoOverlay()
-    }
-    if (videoPositionInterval.value) {
-      clearInterval(videoPositionInterval.value)
-      videoPositionInterval.value = null
-    }
-    lastOverlayTimingsCount.value = 0
+    resetPlayerPlayback()
     await fetchPlayers()
   }
-)
-
-watch(videoOverlayEnabled2, (enabled) => {
-  if (!isElectron.value) return
-
-  if (enabled) {
-    videoOverlayManuallyHidden.value = false
-  }
-
-  if (enabled && !currentOverlayElement.value) {
-    const checkAndCreate = () => {
-      if (playerIframe.value) {
-        try {
-          const iframe = playerIframe.value
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-          if (iframeDoc) {
-            const video = iframeDoc.querySelector('video')
-            if (video) {
-              const timeSinceLoad = Date.now() - (window.iframeLoadTime || 0)
-              if (timeSinceLoad >= 100 && shouldRenderVideoOverlay()) {
-                createVideoOverlay(iframeDoc, video)
-              } else {
-                setTimeout(checkAndCreate, 100 - timeSinceLoad)
-              }
-            }
-          }
-        } catch (error) {
-          debugLog('Error creating overlay via watcher:', error)
-          overlayCreationInProgress.value = false
-        }
-      }
-    }
-    checkAndCreate()
-  } else if (!enabled && currentOverlayElement.value) {
-    videoOverlayManuallyHidden.value = false
-    removeVideoOverlay()
-  }
-})
-
-watch(
-  activeTimingTexts,
-  (newTimings, oldTimings) => {
-    if (!isElectron.value) return
-
-    const hadTimings = oldTimings && oldTimings.length > 0
-    const hasTimings = newTimings && newTimings.length > 0
-
-    if (!hadTimings && hasTimings) {
-      if (!videoOverlayEnabled2.value) {
-        videoOverlayEnabled2.value = true
-        if (window.electronAPI) {
-          window.electronAPI.showToast('Оверлей автоматически включён - добавлены тайминги')
-        }
-      }
-    }
-  },
-  { deep: true }
-)
-
-watch(
-  () => obsSettings.value.enabled,
-  (enabled) => {
-    if (enabled && !obsConnected.value) {
-      connectToOBS()
-    } else if (!enabled && obsConnected.value) {
-      disconnectFromOBS()
-    }
-  }
-)
-
-watch(
-  overlaySettings,
-  (newSettings, oldSettings) => {
-    if (!isElectron.value || !shouldRenderVideoOverlay()) return
-
-    if (oldSettings && newSettings.showBackground !== oldSettings.showBackground) {
-      if (currentOverlayElement.value) {
-        removeVideoOverlay()
-
-        setTimeout(() => {
-          if (playerIframe.value && shouldRenderVideoOverlay()) {
-            try {
-              const iframe = playerIframe.value
-              const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-              if (iframeDoc) {
-                const video = iframeDoc.querySelector('video')
-                if (video && shouldRenderVideoOverlay()) {
-                  createVideoOverlay(iframeDoc, video)
-                }
-              }
-            } catch (error) {
-              debugLog('Error recreating overlay:', error)
-            }
-          }
-        }, 100)
-      }
-    } else if (currentOverlayElement.value) {
-      updateVideoOverlay()
-    }
-  },
-  { deep: true }
 )
 
 const toggleList = (type) => emit('toggle-list', type)
@@ -1491,957 +1040,6 @@ const showFavoriteTooltip = computed(() => playerStore.showFavoriteTooltip)
 const openSettings = () => {
   router.push('/settings')
   hideTooltip()
-}
-
-const toggleVideoOverlay = () => {
-  videoOverlayEnabled2.value = !videoOverlayEnabled2.value
-  videoOverlayManuallyHidden.value = false
-
-  if (!videoOverlayEnabled2.value) {
-    removeVideoOverlay()
-  } else {
-    const createOverlayAfterDelay = () => {
-      if (!currentOverlayElement.value && playerIframe.value) {
-        try {
-          const iframe = playerIframe.value
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-          if (iframeDoc) {
-            const video = iframeDoc.querySelector('video')
-            if (video) {
-              const timeSinceLoad = Date.now() - (window.iframeLoadTime || 0)
-              if (timeSinceLoad >= 100 && shouldRenderVideoOverlay()) {
-                createVideoOverlay(iframeDoc, video)
-              } else {
-                setTimeout(createOverlayAfterDelay, 100 - timeSinceLoad)
-              }
-            }
-          }
-        } catch (error) {
-          debugLog('Error creating overlay:', error)
-          overlayCreationInProgress.value = false
-        }
-      }
-    }
-    createOverlayAfterDelay()
-  }
-}
-
-const initializeOBSWebSocket = () => {
-  if (obsWebSocket.value) {
-    obsWebSocket.value.disconnect()
-  }
-
-  obsWebSocket.value = new OBSWebSocket()
-
-  obsWebSocket.value.setCallbacks({
-    onConnect: () => {
-      obsConnected.value = true
-      playerStore.setObsConnected(true)
-      if (isElectron.value && window.electronAPI) {
-        window.electronAPI.showToast('Подключен к OBS WebSocket')
-      }
-    },
-    onDisconnect: () => {
-      obsConnected.value = false
-      playerStore.setObsConnected(false)
-      obsSources.value = []
-      obsFiltersFound.value = []
-    },
-    onSourcesUpdated: (sources) => {
-      obsSources.value = sources
-      window.obsSources = sources
-    },
-    onFiltersFound: (filters) => {
-      obsFiltersFound.value = filters
-      window.obsFiltersFound = filters
-      playerStore.updateObsSettings({ filtersFound: filters })
-    },
-    onError: (error) => {
-      console.error('OBS WebSocket error:', error)
-      if (isElectron.value && window.electronAPI) {
-        window.electronAPI.showToast(`Ошибка OBS: ${error}`)
-      }
-    }
-  })
-}
-
-const connectToOBS = async () => {
-  if (!obsWebSocket.value) {
-    initializeOBSWebSocket()
-  }
-
-  await obsWebSocket.value.connect(
-    obsSettings.value.host,
-    obsSettings.value.port,
-    obsSettings.value.password
-  )
-}
-
-const disconnectFromOBS = () => {
-  if (obsWebSocket.value) {
-    obsWebSocket.value.disconnect()
-  }
-}
-
-const testOBSBlur = (selectedFilterId) => {
-  if (obsWebSocket.value && obsConnected.value && selectedFilterId) {
-    obsWebSocket.value.testBlur(selectedFilterId)
-  } else {
-    if (isElectron.value && window.electronAPI) {
-      window.electronAPI.showToast('Фильтр не выбран или не найден в OBS')
-    }
-  }
-}
-
-const refreshOBSFilters = () => {
-  if (obsWebSocket.value && obsConnected.value) {
-    obsWebSocket.value.loadSourcesAndSearchFilters()
-  }
-}
-
-const getOBSFiltersInfo = () => {
-  return obsFiltersFound.value
-}
-
-const exitFullscreen = () => {
-  try {
-    if (document.exitFullscreen) {
-      document.exitFullscreen()
-    } else if (document.webkitExitFullscreen) {
-      document.webkitExitFullscreen()
-    } else if (document.mozCancelFullScreen) {
-      document.mozCancelFullScreen()
-    } else if (document.msExitFullscreen) {
-      document.msExitFullscreen()
-    }
-
-    const iframe = playerIframe.value
-    if (iframe) {
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-      if (iframeDoc) {
-        if (iframeDoc.exitFullscreen) {
-          iframeDoc.exitFullscreen()
-        } else if (iframeDoc.webkitExitFullscreen) {
-          iframeDoc.webkitExitFullscreen()
-        } else if (iframeDoc.mozCancelFullScreen) {
-          iframeDoc.mozCancelFullScreen()
-        } else if (iframeDoc.msExitFullscreen) {
-          iframeDoc.msExitFullscreen()
-        }
-
-        const video = iframeDoc.querySelector('video')
-        if (video) {
-          if (video.webkitExitFullscreen) {
-            video.webkitExitFullscreen()
-          } else if (video.exitFullscreen) {
-            video.exitFullscreen()
-          }
-        }
-      }
-    }
-  } catch (error) {
-    debugLog('Error exiting fullscreen:', error)
-  }
-}
-
-const showOverlaySettings = () => {
-  if (!isElectron.value) return
-
-  const iframe = playerIframe.value
-  const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-  if (!iframeDoc) return
-
-  if (iframeDoc.getElementById('overlay-settings-modal')) return
-
-  const settings = overlaySettings.value
-
-  const modal = iframeDoc.createElement('div')
-  modal.id = 'overlay-settings-modal'
-  modal.style.cssText = getSettingsModalStyle()
-
-  const modalContent = iframeDoc.createElement('div')
-  modalContent.style.cssText = getSettingsModalContentStyle()
-
-  modalContent.innerHTML = getOverlaySettingsMarkup(settings)
-  ;['click', 'mousedown', 'mouseup', 'mousemove', 'wheel', 'contextmenu'].forEach((eventType) => {
-    modalContent.addEventListener(eventType, (e) => {
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-    })
-  })
-
-  modal.appendChild(modalContent)
-
-  modal.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-    if (e.target === modal) {
-      modal.remove()
-    }
-  })
-  ;['mousedown', 'mouseup', 'mousemove', 'wheel', 'contextmenu'].forEach((eventType) => {
-    modal.addEventListener(eventType, (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-    })
-  })
-
-  modalContent.querySelector('#saveSettings').addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-    const newSettings = {
-      showTitle: modalContent.querySelector('#showTitle').checked,
-      showDuration2: modalContent.querySelector('#showDuration').checked,
-      showBackground: modalContent.querySelector('#showBackground').checked,
-      showTimingsOnMouseMove: modalContent.querySelector('#showTimingsOnMouseMove').checked,
-      highlightTimings: modalContent.querySelector('#highlightTimings').checked,
-      autoBlurTimings: modalContent.querySelector('#autoBlurTimings').checked
-    }
-    overlaySettings.value = newSettings
-    window.electronAPI?.showToast('Настройки оверлея сохранены')
-    modal.remove()
-  })
-
-  modalContent.querySelector('#cancelSettings').addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-    modal.remove()
-  })
-
-  const buttons = modalContent.querySelectorAll('button')
-  buttons.forEach((button) => {
-    button.addEventListener('mouseenter', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      applySettingsButtonHoverStyle(button, true)
-    })
-    button.addEventListener('mouseleave', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      applySettingsButtonHoverStyle(button, false)
-    })
-    ;['mousedown', 'mouseup', 'mousemove', 'wheel', 'contextmenu'].forEach((eventType) => {
-      button.addEventListener(eventType, (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        e.stopImmediatePropagation()
-      })
-    })
-  })
-
-  const checkboxes = modalContent.querySelectorAll('input[type="checkbox"]')
-  const labels = modalContent.querySelectorAll('label')
-
-  checkboxes.forEach((checkbox) => {
-    ;['click', 'mousedown', 'mouseup', 'mousemove', 'wheel', 'contextmenu'].forEach((eventType) => {
-      checkbox.addEventListener(eventType, (e) => {
-        if (eventType !== 'click') {
-          e.preventDefault()
-          e.stopPropagation()
-          e.stopImmediatePropagation()
-        } else {
-          e.stopPropagation()
-        }
-      })
-    })
-  })
-
-  labels.forEach((label) => {
-    ;['mousedown', 'mouseup', 'mousemove', 'wheel', 'contextmenu'].forEach((eventType) => {
-      label.addEventListener(eventType, (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        e.stopImmediatePropagation()
-      })
-    })
-  })
-
-  iframeDoc.body.appendChild(modal)
-}
-
-const createVideoOverlay = (iframeDoc, video) => {
-  if (!shouldRenderVideoOverlay()) {
-    return
-  }
-  if (currentOverlayElement.value) {
-    return
-  }
-  if (overlayCreationInProgress.value) {
-    return
-  }
-
-  overlayCreationInProgress.value = true
-
-  const overlay = iframeDoc.createElement('div')
-  overlay.id = 'reyohoho-video-overlay'
-
-  let applyOverlayStyles = () => {
-    overlay.style.cssText = getOverlayBaseStyle()
-  }
-
-  const mainInfo = iframeDoc.createElement('div')
-  mainInfo.style.cssText = getMainInfoStyle()
-
-  const movieTitle = iframeDoc.createElement('div')
-  const initialFontSize = overlaySettings.value.fontSize || 18
-
-  movieTitle.style.cssText = getMovieTitleStyle({
-    fontSize: initialFontSize,
-    showBackground: overlaySettings.value.showBackground
-  })
-
-  const videoProgress = iframeDoc.createElement('div')
-  videoProgress.style.cssText = getVideoProgressStyle({
-    fontSize: initialFontSize,
-    showBackground: overlaySettings.value.showBackground
-  })
-
-  const timingsPanel = iframeDoc.createElement('div')
-  timingsPanel.style.cssText = getTimingsPanelStyle({
-    showBackground: overlaySettings.value.showBackground
-  })
-
-  const timingsContent = iframeDoc.createElement('div')
-  timingsContent.style.cssText = getTimingsContentStyle({ fontSize: initialFontSize })
-
-  const controlsContainer = iframeDoc.createElement('div')
-  controlsContainer.style.cssText = getControlsContainerStyle()
-
-  const settingsBtn = iframeDoc.createElement('button')
-  settingsBtn.style.cssText = getOverlayButtonStyle()
-  settingsBtn.innerHTML = '⚙️'
-  settingsBtn.title = 'Настройки оверлея'
-
-  const fontDecreaseBtn = iframeDoc.createElement('button')
-  fontDecreaseBtn.style.cssText = getOverlayButtonStyle({ fontSize: 15, fontWeight: '700' })
-  fontDecreaseBtn.innerHTML = 'A-'
-  fontDecreaseBtn.title = 'Уменьшить шрифт'
-
-  const fontIncreaseBtn = iframeDoc.createElement('button')
-  fontIncreaseBtn.style.cssText = getOverlayButtonStyle({ fontSize: 15, fontWeight: '700' })
-  fontIncreaseBtn.innerHTML = 'A+'
-  fontIncreaseBtn.title = 'Увеличить шрифт'
-
-  const toggleBtn = iframeDoc.createElement('button')
-  toggleBtn.style.cssText = getOverlayButtonStyle()
-  toggleBtn.innerHTML = '👁️'
-  toggleBtn.title = 'Отключить оверлей'
-
-  toggleBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-    videoOverlayManuallyHidden.value = true
-    applyManualHiddenOverlayState()
-  })
-
-  settingsBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-
-    exitFullscreen()
-
-    setTimeout(() => {
-      showOverlaySettings()
-    }, 100)
-  })
-
-  fontDecreaseBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-    const currentSize = overlaySettings.value.fontSize || 18
-    if (currentSize > 10) {
-      overlaySettings.value = { ...overlaySettings.value, fontSize: currentSize - 2 }
-    }
-  })
-
-  fontIncreaseBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-    const currentSize = overlaySettings.value.fontSize || 18
-    if (currentSize < 36) {
-      overlaySettings.value = { ...overlaySettings.value, fontSize: currentSize + 2 }
-    }
-  })
-  ;[settingsBtn, toggleBtn, fontDecreaseBtn, fontIncreaseBtn].forEach((btn) => {
-    btn.addEventListener('mouseenter', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      applyOverlayButtonHoverStyle(btn, true)
-    })
-    btn.addEventListener('mouseleave', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      applyOverlayButtonHoverStyle(btn, false)
-    })
-    ;['mousedown', 'mouseup', 'mousemove', 'wheel', 'contextmenu'].forEach((eventType) => {
-      btn.addEventListener(eventType, (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        e.stopImmediatePropagation()
-      })
-    })
-  })
-  ;['click', 'mousedown', 'mouseup', 'mousemove', 'wheel', 'contextmenu'].forEach((eventType) => {
-    controlsContainer.addEventListener(eventType, (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-    })
-  })
-
-  controlsContainer.appendChild(fontDecreaseBtn)
-  controlsContainer.appendChild(fontIncreaseBtn)
-  controlsContainer.appendChild(settingsBtn)
-  controlsContainer.appendChild(toggleBtn)
-
-  timingsPanel.appendChild(timingsContent)
-
-  mainInfo.appendChild(movieTitle)
-  mainInfo.appendChild(videoProgress)
-
-  overlay.appendChild(mainInfo)
-  overlay.appendChild(timingsPanel)
-  overlay.appendChild(controlsContainer)
-
-  controlsContainer.style.transition = 'opacity 0.3s ease, visibility 0.3s ease'
-  applyOverlayVisibilityStyle(controlsContainer, false)
-
-  mainInfo.style.transition = 'opacity 0.3s ease'
-  let hideMainInfoTimeout = null
-
-  const handleMouseMove = () => {
-    if (applyManualHiddenOverlayState()) {
-      return
-    }
-
-    applyOverlayVisibilityStyle(controlsContainer, true)
-    mainInfo.style.opacity = '0'
-
-    if (overlaySettings.value.showTimingsOnMouseMove && activeTimingTexts.value.length > 0) {
-      applyOverlayVisibilityStyle(timingsPanel, true)
-      clearTimeout(hideTimingsTimeout)
-      hideTimingsTimeout = null
-
-      if (!hasActiveTimings.value) {
-        hideTimingsTimeout = setTimeout(() => {
-          applyOverlayVisibilityStyle(timingsPanel, false)
-          hideTimingsTimeout = null
-        }, 3000)
-      }
-    }
-
-    clearTimeout(overlayControlsTimeout.value)
-    clearTimeout(hideMainInfoTimeout)
-
-    overlayControlsTimeout.value = setTimeout(() => {
-      applyOverlayVisibilityStyle(controlsContainer, false)
-    }, 3000)
-
-    hideMainInfoTimeout = setTimeout(() => {
-      mainInfo.style.opacity = '1'
-    }, 2000)
-  }
-
-  iframeDoc.addEventListener('mousemove', handleMouseMove)
-
-  overlay.addEventListener('mouseenter', () => {
-    if (applyManualHiddenOverlayState()) {
-      return
-    }
-
-    applyOverlayVisibilityStyle(controlsContainer, true)
-    mainInfo.style.opacity = '0'
-    clearTimeout(hideMainInfoTimeout)
-  })
-
-  overlay.addEventListener('mouseleave', () => {
-    clearTimeout(overlayControlsTimeout.value)
-    clearTimeout(hideMainInfoTimeout)
-    applyOverlayVisibilityStyle(controlsContainer, false)
-    mainInfo.style.opacity = '1'
-  })
-
-  overlay._mouseHandler = handleMouseMove
-
-  const findBestContainer = (videoElement) => {
-    const fullscreenElement = getIframeFullscreenElement(iframeDoc)
-    const isFullscreen = isIframeVideoFullscreen(iframeDoc, videoElement)
-
-    if (isFullscreen) {
-      return iframeDoc.body || iframeDoc.documentElement
-    }
-
-    if (fullscreenElement && fullscreenElement !== videoElement) {
-      return fullscreenElement
-    }
-
-    let container = videoElement.parentNode
-    let attempts = 0
-    const maxAttempts = 5
-
-    while (container && attempts < maxAttempts) {
-      const computedStyle = iframeDoc.defaultView.getComputedStyle(container)
-      const rect = container.getBoundingClientRect()
-
-      if (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        (computedStyle.position === 'relative' ||
-          computedStyle.position === 'absolute' ||
-          computedStyle.position === 'fixed' ||
-          container.tagName === 'BODY')
-      ) {
-        return container
-      }
-
-      container = container.parentNode
-      attempts++
-    }
-
-    return videoElement.parentNode
-  }
-
-  const targetContainer = findBestContainer(video)
-
-  overlay._targetContainer = targetContainer
-  overlay._videoElement = video
-
-  const applyOverlayStylesUpdated = () => {
-    const video = overlay._videoElement
-    const container = overlay._targetContainer
-
-    const fullscreenElement = getIframeFullscreenElement(iframeDoc)
-    const isFullscreen = isIframeVideoFullscreen(iframeDoc, video)
-
-    if (isFullscreen) {
-      overlay.style.cssText = getOverlayPositionStyle({ fullscreen: true })
-    } else if (fullscreenElement) {
-      overlay.style.cssText = getOverlayPositionStyle({
-        fullscreen: false,
-        top: 0,
-        left: 0,
-        width: fullscreenElement.clientWidth || fullscreenElement.offsetWidth || window.innerWidth,
-        height: fullscreenElement.clientHeight || fullscreenElement.offsetHeight || window.innerHeight
-      })
-    } else {
-      const videoStyle = iframeDoc.defaultView.getComputedStyle(video)
-      const containerRect = container.getBoundingClientRect()
-
-      const videoWidth = video.offsetWidth || video.clientWidth || parseFloat(videoStyle.width) || 0
-      const videoHeight =
-        video.offsetHeight || video.clientHeight || parseFloat(videoStyle.height) || 0
-
-      const videoRect = video.getBoundingClientRect()
-      const relativeTop = videoRect.top - containerRect.top + container.scrollTop
-      const relativeLeft = videoRect.left - containerRect.left + container.scrollLeft
-
-      overlay.style.cssText = getOverlayPositionStyle({
-        fullscreen: false,
-        top: relativeTop,
-        left: relativeLeft,
-        width: videoWidth,
-        height: videoHeight
-      })
-    }
-  }
-
-  applyOverlayStyles = applyOverlayStylesUpdated
-
-  video.style.position = 'relative'
-  if (targetContainer.style.position === '' || targetContainer.style.position === 'static') {
-    targetContainer.style.position = 'relative'
-  }
-
-  targetContainer.appendChild(overlay)
-
-  applyOverlayStyles()
-
-  currentOverlayElement.value = overlay
-  overlayCreationInProgress.value = false
-
-  const overlayMonitorInterval = setInterval(() => {
-    if (!currentOverlayElement.value || !videoOverlayEnabled2.value) {
-      clearInterval(overlayMonitorInterval)
-      return
-    }
-
-    if (!iframeDoc.body.contains(overlay)) {
-      try {
-        const videos = iframeDoc.querySelectorAll('video')
-        if (videos.length > 0) {
-          const newVideo = videos[0]
-
-          overlay._videoElement = newVideo
-
-          const findBestContainer = (videoElement) => {
-            const fullscreenElement = getIframeFullscreenElement(iframeDoc)
-            const isFullscreen = isIframeVideoFullscreen(iframeDoc, videoElement)
-
-            if (isFullscreen) {
-              return iframeDoc.body || iframeDoc.documentElement
-            }
-
-            if (fullscreenElement && fullscreenElement !== videoElement) {
-              return fullscreenElement
-            }
-
-            let container = videoElement.parentNode
-            let attempts = 0
-            const maxAttempts = 5
-
-            while (container && attempts < maxAttempts) {
-              const computedStyle = iframeDoc.defaultView.getComputedStyle(container)
-              const rect = container.getBoundingClientRect()
-
-              if (
-                rect.width > 0 &&
-                rect.height > 0 &&
-                (computedStyle.position === 'relative' ||
-                  computedStyle.position === 'absolute' ||
-                  computedStyle.position === 'fixed' ||
-                  container.tagName === 'BODY')
-              ) {
-                return container
-              }
-
-              container = container.parentNode
-              attempts++
-            }
-
-            return videoElement.parentNode
-          }
-
-          const targetContainer = findBestContainer(newVideo)
-          overlay._targetContainer = targetContainer
-          targetContainer.appendChild(overlay)
-          applyOverlayStyles()
-
-          if (overlay._mouseHandler) {
-            iframeDoc.removeEventListener('mousemove', overlay._mouseHandler)
-            iframeDoc.addEventListener('mousemove', overlay._mouseHandler)
-          }
-        }
-      } catch (e) {
-        debugLog('Error re-adding overlay to DOM:', e)
-      }
-    }
-
-    const computedStyle = iframeDoc.defaultView.getComputedStyle(overlay)
-    if (
-      computedStyle.visibility === 'hidden' ||
-      computedStyle.display === 'none' ||
-      computedStyle.opacity === '0'
-    ) {
-      applyOverlayStyles()
-    }
-
-    const currentZIndex = parseInt(computedStyle.zIndex) || 0
-    if (currentZIndex < 999999999) {
-      applyOverlayStyles()
-    }
-
-    if (overlay._videoElement && overlay._targetContainer) {
-      const video = overlay._videoElement
-      const videoStyle = iframeDoc.defaultView.getComputedStyle(video)
-
-      const fullscreenElement = getIframeFullscreenElement(iframeDoc)
-      const isFullscreen = isIframeVideoFullscreen(iframeDoc, video)
-
-      let expectedWidth, expectedHeight
-
-      if (isFullscreen) {
-        expectedWidth = window.innerWidth
-        expectedHeight = window.innerHeight
-      } else if (fullscreenElement) {
-        expectedWidth = fullscreenElement.clientWidth || fullscreenElement.offsetWidth || window.innerWidth
-        expectedHeight =
-          fullscreenElement.clientHeight || fullscreenElement.offsetHeight || window.innerHeight
-      } else {
-        expectedWidth = video.offsetWidth || video.clientWidth || parseFloat(videoStyle.width) || 0
-        expectedHeight =
-          video.offsetHeight || video.clientHeight || parseFloat(videoStyle.height) || 0
-      }
-
-      const currentWidth = parseInt(computedStyle.width) || 0
-      const currentHeight = parseInt(computedStyle.height) || 0
-
-      if (
-        Math.abs(currentWidth - expectedWidth) > 5 ||
-        Math.abs(currentHeight - expectedHeight) > 5
-      ) {
-        applyOverlayStyles()
-      }
-    }
-  }, 1000)
-
-  const overlayObserver = new window.MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
-      if (mutation.type === 'attributes' && mutation.target === overlay) {
-        if (mutation.attributeName === 'style') {
-          setTimeout(() => {
-            if (currentOverlayElement.value && videoOverlayEnabled2.value) {
-              applyOverlayStyles()
-            }
-          }, 100)
-        }
-      }
-    })
-  })
-
-  overlayObserver.observe(overlay, {
-    attributes: true,
-    attributeFilter: ['style', 'class']
-  })
-
-  const resizeHandler = () => {
-    if (currentOverlayElement.value && videoOverlayEnabled2.value) {
-      applyOverlayStyles()
-    }
-  }
-
-  const fullscreenHandler = () => {
-    if (currentOverlayElement.value && videoOverlayEnabled2.value) {
-      setTimeout(() => {
-        applyOverlayStyles()
-      }, 100)
-    }
-  }
-
-  iframeDoc.defaultView.addEventListener('resize', resizeHandler)
-  iframeDoc.addEventListener('fullscreenchange', fullscreenHandler)
-  iframeDoc.addEventListener('webkitfullscreenchange', fullscreenHandler)
-
-  video.addEventListener('webkitbeginfullscreen', fullscreenHandler)
-  video.addEventListener('webkitendfullscreen', fullscreenHandler)
-
-  overlay._monitorInterval = overlayMonitorInterval
-  overlay._mutationObserver = overlayObserver
-  overlay._resizeHandler = resizeHandler
-  overlay._fullscreenHandler = fullscreenHandler
-  overlay._iframeDoc = iframeDoc
-
-  const initialProtectionInterval = setInterval(() => {
-    if (!currentOverlayElement.value || !videoOverlayEnabled2.value) {
-      clearInterval(initialProtectionInterval)
-      return
-    }
-    applyOverlayStyles()
-  }, 500)
-
-  setTimeout(() => {
-    clearInterval(initialProtectionInterval)
-  }, 10000)
-}
-
-const updateVideoOverlay = () => {
-  if (!currentOverlayElement.value || !videoOverlayEnabled2.value) {
-    return
-  }
-
-  const iframe = playerIframe.value
-  if (!iframe) return
-  const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-  if (!iframeDoc) return
-
-  const overlay = currentOverlayElement.value
-  const mainInfo = overlay.children[0]
-  const timingsPanel = overlay.children[1]
-
-  const computedStyle = iframeDoc.defaultView.getComputedStyle(overlay)
-  if (computedStyle.display === 'none' || computedStyle.visibility === 'hidden') {
-    overlay.style.setProperty('display', 'flex', 'important')
-    overlay.style.setProperty('visibility', 'visible', 'important')
-  }
-
-  const currentFontSize = overlaySettings.value.fontSize || 18
-  const movieTitle = mainInfo.children[0]
-  movieTitle.style.fontSize = `${currentFontSize + 2}px`
-  if (overlaySettings.value.showTitle) {
-    movieTitle.style.display = 'block'
-    const title =
-      props.movieInfo?.title ||
-      props.movieInfo?.name_ru ||
-      props.movieInfo?.name_en ||
-      props.movieInfo?.name_original ||
-      'Загрузка...'
-    const year = props.movieInfo?.year ? ` (${props.movieInfo.year})` : ''
-    movieTitle.textContent = title + year
-
-    applyOverlayTitleBackgroundStyle(movieTitle, overlaySettings.value.showBackground)
-  } else {
-    movieTitle.style.display = 'none'
-  }
-
-  const videoProgress = mainInfo.children[1]
-  videoProgress.style.fontSize = `${currentFontSize}px`
-  let progressHtml = ''
-
-  if (overlaySettings.value.showDuration2) {
-    const currentTimeFormatted = formatSecondsToTime(currentVideoTime.value)
-    const totalTimeFormatted = formatSecondsToTime(totalVideoDuration.value)
-    progressHtml = getDurationProgressMarkup({ currentTimeFormatted, totalTimeFormatted })
-  }
-
-  if (obsSettings.value.enabled && obsSettings.value.showObsInOverlay) {
-    let statusText = 'Отключен'
-    const statusColor = '#999999'
-
-    if (obsConnected.value) {
-      if (obsSettings.value.selectedFilterId) {
-        const selectedFilter = obsFiltersFound.value.find(
-          (f) => f.id === obsSettings.value.selectedFilterId
-        )
-        if (selectedFilter) {
-          statusText = `${selectedFilter.filterName} (${selectedFilter.sceneName})`
-        } else {
-          statusText = 'Фильтр не найден'
-        }
-      } else if (obsFiltersFound.value.length > 0) {
-        statusText = 'Фильтр не выбран'
-      } else {
-        statusText = 'Фильтры не найдены'
-      }
-    }
-
-    const obsStatusHtml = getObsStatusMarkup({ statusColor, statusText })
-    progressHtml = progressHtml ? `${progressHtml} ${obsStatusHtml}` : obsStatusHtml
-  }
-
-  if (progressHtml) {
-    videoProgress.style.display = 'flex'
-    videoProgress.innerHTML = progressHtml
-    applyOverlayProgressBackgroundStyle(videoProgress, overlaySettings.value.showBackground)
-  } else {
-    videoProgress.style.display = 'none'
-  }
-
-  if (activeTimingTexts.value.length > 0) {
-    const timingsContent = timingsPanel.children[0]
-    timingsContent.style.cssText = getTimingsContentStyle({ fontSize: currentFontSize })
-    timingsContent.innerHTML = ''
-
-    const list = iframeDoc.createElement('div')
-    list.style.cssText = getTimingsListStyle()
-
-    activeTimingTexts.value.forEach((timing) => {
-      timing.intervals.forEach((interval) => {
-        const intervalSpan = iframeDoc.createElement('div')
-        intervalSpan.textContent = interval.text
-        intervalSpan.style.cssText = getTimingChipStyle({
-          status: interval.status,
-          highlight: overlaySettings.value.highlightTimings
-        })
-
-        list.appendChild(intervalSpan)
-      })
-    })
-
-    timingsContent.appendChild(list)
-    timingsPanel.style.display = 'block'
-
-    if (!overlaySettings.value.showTimingsOnMouseMove || hasActiveTimings.value) {
-      applyOverlayVisibilityStyle(timingsPanel, true)
-    }
-
-    applyOverlayTimingsBackgroundStyle(timingsPanel, overlaySettings.value.showBackground)
-  } else {
-    timingsPanel.style.display = 'none'
-  }
-
-  if (
-    overlaySettings.value.showTimingsOnMouseMove &&
-    hasActiveTimings.value &&
-    activeTimingTexts.value.length > 0
-  ) {
-    applyOverlayVisibilityStyle(timingsPanel, true)
-    clearTimeout(hideTimingsTimeout)
-  } else if (
-    overlaySettings.value.showTimingsOnMouseMove &&
-    !hasActiveTimings.value &&
-    activeTimingTexts.value.length > 0 &&
-    timingsPanel.style.opacity === '1' &&
-    !hideTimingsTimeout
-  ) {
-    hideTimingsTimeout = setTimeout(() => {
-      applyOverlayVisibilityStyle(timingsPanel, false)
-      hideTimingsTimeout = null
-    }, 3000)
-  }
-}
-
-const removeVideoOverlay = () => {
-  if (currentOverlayElement.value) {
-    try {
-      if (currentOverlayElement.value._monitorInterval) {
-        clearInterval(currentOverlayElement.value._monitorInterval)
-      }
-      if (currentOverlayElement.value._mutationObserver) {
-        currentOverlayElement.value._mutationObserver.disconnect()
-      }
-      if (currentOverlayElement.value._resizeHandler && currentOverlayElement.value._iframeDoc) {
-        currentOverlayElement.value._iframeDoc.defaultView.removeEventListener(
-          'resize',
-          currentOverlayElement.value._resizeHandler
-        )
-      }
-      if (
-        currentOverlayElement.value._fullscreenHandler &&
-        currentOverlayElement.value._iframeDoc
-      ) {
-        currentOverlayElement.value._iframeDoc.removeEventListener(
-          'fullscreenchange',
-          currentOverlayElement.value._fullscreenHandler
-        )
-        currentOverlayElement.value._iframeDoc.removeEventListener(
-          'webkitfullscreenchange',
-          currentOverlayElement.value._fullscreenHandler
-        )
-
-        if (currentOverlayElement.value._videoElement) {
-          currentOverlayElement.value._videoElement.removeEventListener(
-            'webkitbeginfullscreen',
-            currentOverlayElement.value._fullscreenHandler
-          )
-          currentOverlayElement.value._videoElement.removeEventListener(
-            'webkitendfullscreen',
-            currentOverlayElement.value._fullscreenHandler
-          )
-        }
-      }
-      if (currentOverlayElement.value._mouseHandler && currentOverlayElement.value._iframeDoc) {
-        currentOverlayElement.value._iframeDoc.removeEventListener(
-          'mousemove',
-          currentOverlayElement.value._mouseHandler
-        )
-      }
-
-      currentOverlayElement.value.remove()
-    } catch (e) {
-      debugLog('Error removing overlay:', e)
-    }
-    currentOverlayElement.value = null
-  }
-
-  overlayCreationInProgress.value = false
-
-  if (overlayControlsTimeout.value) {
-    clearTimeout(overlayControlsTimeout.value)
-    overlayControlsTimeout.value = null
-  }
-  clearTimeout(hideTimingsTimeout)
-  hideTimingsTimeout = null
 }
 
 onMounted(() => {
@@ -2455,77 +1053,8 @@ onMounted(() => {
   window.toggleCompressor = toggleCompressor
   window.toggleMirror = toggleMirror
 
-  initializeOBSWebSocket()
-
-  window.connectToOBS = connectToOBS
-  window.testOBSBlur = testOBSBlur
-  window.refreshOBSFilters = refreshOBSFilters
-  window.getOBSFiltersInfo = getOBSFiltersInfo
-  window.testOBSConnection = testOBSConnection
-
-  window.debugOBS = () => {
-    debugLog('=== OBS Debug Info ===')
-    debugLog('OBS Settings:', obsSettings.value)
-    debugLog('OBS Connected:', obsConnected.value)
-    debugLog('OBS Filters Found:', obsFiltersFound.value)
-    debugLog('OBS WebSocket instance:', obsWebSocket.value)
-
-    if (obsWebSocket.value) {
-      debugLog('WebSocket state:', obsWebSocket.value.ws?.readyState)
-      debugLog('Is Connected:', obsWebSocket.value.isConnected)
-      debugLog('Is Authenticated:', obsWebSocket.value.isAuthenticated)
-    }
-  }
-
-  if (obsSettings.value.enabled) {
-    connectToOBS()
-  }
-
-  if (isElectron.value) {
-    overlayTimingsCheckInterval.value = setInterval(() => {
-      const currentCount = window.overlayNudityTimings ? window.overlayNudityTimings.length : 0
-
-      if (currentCount > lastOverlayTimingsCount.value) {
-        lastOverlayTimingsCount.value = currentCount
-
-        if (!videoOverlayEnabled2.value) {
-          videoOverlayEnabled2.value = true
-          if (window.electronAPI) {
-            window.electronAPI.showToast('Оверлей автоматически включён - добавлены тайминги')
-          }
-        }
-      } else {
-        lastOverlayTimingsCount.value = currentCount
-      }
-    }, 1000)
-  }
-
-  if (isElectron.value && shouldRenderVideoOverlay()) {
-    const initializeOverlay = () => {
-      if (playerIframe.value && !currentOverlayElement.value) {
-        try {
-          const iframe = playerIframe.value
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document
-          if (iframeDoc) {
-            const video = iframeDoc.querySelector('video')
-            if (video) {
-              const timeSinceLoad = Date.now() - (window.iframeLoadTime || 0)
-              if (timeSinceLoad >= 100 && shouldRenderVideoOverlay()) {
-                createVideoOverlay(iframeDoc, video)
-              } else {
-                setTimeout(initializeOverlay, 100 - timeSinceLoad)
-              }
-            }
-          }
-        } catch (error) {
-          debugLog('Error initializing overlay on mount:', error)
-          overlayCreationInProgress.value = false
-        }
-      }
-    }
-
-    setTimeout(initializeOverlay, 1000)
-  }
+  obs.mount()
+  videoOverlay.mount()
 })
 
 onBeforeUnmount(() => {
@@ -2535,37 +1064,11 @@ onBeforeUnmount(() => {
   stopCurrentVideoErrorTracking()
   cleanupPlayerLayout()
 
-  if (videoPositionInterval.value) {
-    clearInterval(videoPositionInterval.value)
-  }
-  if (overlayTimingsCheckInterval.value) {
-    clearInterval(overlayTimingsCheckInterval.value)
-  }
-  removeVideoOverlay()
+  clearTimeout(hideTimeout)
+  videoOverlay.dispose()
   cleanupElectronControls()
-
-  disconnectFromOBS()
-
-  delete window.connectToOBS
-  delete window.toggleCompressor
-  delete window.toggleMirror
-  delete window.testOBSBlur
-  delete window.refreshOBSFilters
-  delete window.getOBSFiltersInfo
-  delete window.testOBSConnection
-  delete window.debugOBS
-  delete window.obsSources
-  delete window.obsFiltersFound
+  obs.dispose()
 })
-
-const testOBSConnection = async () => {
-  if (obsWebSocket.value && obsConnected.value) {
-    const result = await obsWebSocket.value.testConnection()
-    return result
-  } else {
-    return { success: false, error: 'Not connected' }
-  }
-}
 </script>
 
 <style scoped src="../assets/player-component.scss"></style>
