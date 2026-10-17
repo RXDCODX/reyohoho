@@ -33,7 +33,6 @@ describe('usePlayerVideoOverlay lazy activation', () => {
       props: {},
       enableBlur: vi.fn(),
       disableBlur: vi.fn(),
-      obs: {},
       loadOverlay: loader
     })
     overlays.push(overlay)

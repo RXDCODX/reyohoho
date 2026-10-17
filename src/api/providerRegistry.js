@@ -15,8 +15,6 @@ export const KINOBD_SUPPORTED_METHODS = new Set([
   'getKpIDfromIMDB',
   'getRandomMovie'
 ])
-export const KINOBOX_SUPPORTED_METHODS = new Set(['getPlayers'])
-export const DDBB_SUPPORTED_METHODS = new Set(['getPlayers'])
 export const LOCAL_SUPPORTED_METHODS = new Set([
   'getShikiInfo',
   'getShikiPlayers',

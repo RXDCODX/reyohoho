@@ -137,15 +137,16 @@ SSG-код обязан быть SSR-safe: прямой доступ к `window`
 | `/user`, `/lists/:user_id?` | `User.vue`, `UserLists.vue` | profile и own/public lists |
 | `/contact`, catch-all | `ContactsPage.vue`, `NotFound.vue` | static/404 |
 
-`src/router/index.js` устанавливает auth guard, SEO slug redirect, scroll restore, hash handling и
-GoatCounter tracking. Не менять route names: они используются в guards и navigation.
+`src/router/index.js` устанавливает auth guard, SEO slug redirect, hash handling и
+отложенную загрузку GTM/GoatCounter с учётом SPA-переходов. Не менять route names:
+они используются в guards и navigation.
 
 ### Pinia stores
 
 | Store | Ответственность | Persistence/risk |
 |---|---|---|
 | `store/main/main.js` | history, comments/UI settings, content/search provider | persisted; есть legacy hydration и 30-day local history cleanup |
-| `store/player/player.js` | preferred player, source per movie, aspect/overlay/OBS settings | persisted; OBS password также попадает в local persistence |
+| `store/player/player.js` | preferred player, source per movie, aspect/overlay settings | persisted; explicit pick сохраняет только поддерживаемые настройки |
 | `store/auth/auth.js` | JWT, user, name update | token/user persisted в localStorage через Pinia plugin |
 | `store/api/index.js` | backend mode, endpoint health, selected URL | смена URL сбрасывает cached Axios instance |
 | `store/notifications.js` | notification loading/count/toasts | server API сейчас возвращает empty stub |

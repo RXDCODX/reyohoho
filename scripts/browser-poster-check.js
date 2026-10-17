@@ -41,7 +41,7 @@ async function main() {
           await posters.nth(3).scrollIntoViewIfNeeded()
           await page.waitForFunction(() => {
             const img = document.querySelectorAll('img.movie-poster')[3]
-            return img?.complete && img.naturalWidth > 0 && img.getAttribute('lazy') === 'loaded'
+            return img?.complete && img.naturalWidth > 0 && img.loading === 'lazy'
           })
           const home = await page.evaluate(() => ({
             lcpMs: window.__f5.lcp,

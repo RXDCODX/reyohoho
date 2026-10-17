@@ -9,14 +9,25 @@ import { pathToFileURL } from 'node:url'
 import { loadEnv } from 'vite'
 
 const contentTypes = {
-  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.json': 'application/json', '.webp': 'image/webp', '.png': 'image/png',
-  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf', '.webmanifest': 'application/manifest+json'
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.webp': 'image/webp',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.webmanifest': 'application/manifest+json'
 }
 
 export async function createProfileServer({
-  root = path.resolve('dist'), baselineRoot = null, port = 4188, delays = {}
+  root = path.resolve('dist'),
+  baselineRoot = null,
+  port = 4188,
+  delays = {},
+  posterBase = null
 } = {}) {
   for (const ms of Object.values(delays)) {
     if (!Number.isFinite(ms) || ms < 0 || ms > 5000) {
@@ -26,18 +37,32 @@ export async function createProfileServer({
   root = path.resolve(root)
   baselineRoot = baselineRoot ? path.resolve(baselineRoot) : null
   const env = loadEnv('production', process.cwd(), 'VITE_')
-  const origins = [...new Set([
-    'https://api.reyhoho.fun', 'https://p2.ddbb.lol', 'https://a.ddbb.live',
-    'http://localhost:8000',
-    env.VITE_APP_API_URL, env.VITE_KINOBOX_API_URL, env.VITE_KINOBOX_SEARCH_API_URL
-  ].filter(Boolean))]
+  const origins = [
+    ...new Set(
+      [
+        'https://api.reyhoho.fun',
+        'https://p2.ddbb.lol',
+        'https://a.ddbb.live',
+        'http://localhost:8000',
+        env.VITE_APP_API_URL,
+        env.VITE_KINOBOX_API_URL,
+        env.VITE_KINOBOX_SEARCH_API_URL
+      ].filter(Boolean)
+    )
+  ]
   const movies = JSON.parse(await fs.readFile('src/data/movies.json', 'utf8'))
   let origin = `http://127.0.0.1:${port}`
   const toMovie = (movie) => ({
-    id: Number(movie.kp_id), title: { russian: movie.title, original: movie.name_original },
-    year: Number(movie.year), type: 'movie', description: movie.description,
-    gallery: { posterUrl: `${origin}/__profile/poster.svg` },
-    rating: {}, countries: [], genres: [], crew: []
+    id: Number(movie.kp_id),
+    title: { russian: movie.title, original: movie.name_original },
+    year: Number(movie.year),
+    type: 'movie',
+    description: movie.description,
+    gallery: { posterUrl: posterBase ? `${posterBase}orig` : `${origin}/__profile/poster.svg` },
+    rating: {},
+    countries: [],
+    genres: [],
+    crew: []
   })
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, origin)
@@ -46,30 +71,41 @@ export async function createProfileServer({
       return
     }
     // Defense in depth: the fixture's pages cannot access any external service.
-    res.setHeader('Content-Security-Policy',
-      "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; frame-src 'self'; worker-src 'none'")
+    res.setHeader(
+      'Content-Security-Policy',
+      `default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob: ${posterBase ? new URL(posterBase).origin : ''}; font-src 'self'; frame-src 'self'; worker-src 'none'`
+    )
     res.setHeader('Cache-Control', 'no-store')
     let body
     let type
     try {
       if (url.pathname === '/__profile/setup') {
         if (['before', 'after'].includes(url.searchParams.get('build'))) {
-          res.setHeader('Set-Cookie', `__profile_build=${url.searchParams.get('build')}; Path=/; SameSite=Strict`)
+          res.setHeader(
+            'Set-Cookie',
+            `__profile_build=${url.searchParams.get('build')}; Path=/; SameSite=Strict`
+          )
         }
         type = 'text/html'
         body = '<!doctype html><title>Local profile setup</title><p>Local profile setup</p>'
       } else if (url.pathname === '/__profile/poster.svg') {
         type = 'image/svg+xml'
-        body = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450"><rect width="300" height="450" fill="#262238"/></svg>'
+        body =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450"><rect width="300" height="450" fill="#262238"/></svg>'
       } else if (url.pathname.startsWith('/__profile/api/')) {
         type = 'application/json'
         const endpoint = url.pathname.slice('/__profile/api'.length)
         if (endpoint === '/api/kinopoisk/top') {
           const start = (Number(url.searchParams.get('page') || 1) - 1) * 36
           const rows = movies.slice(start, start + Number(url.searchParams.get('limit') || 36))
-          body = JSON.stringify({ data: { items: rows.map((movie, i) => ({
-            movie: toMovie(movie), position: start + i + 1
-          })) } })
+          body = JSON.stringify({
+            data: {
+              items: rows.map((movie, i) => ({
+                movie: toMovie(movie),
+                position: start + i + 1
+              }))
+            }
+          })
         } else if (endpoint.startsWith('/api/movies/') && !endpoint.includes('/players')) {
           if (delays.movie) await delay(delays.movie)
           const id = endpoint.split('/').filter(Boolean).at(-1)
@@ -88,16 +124,31 @@ export async function createProfileServer({
           body = '{"error":"No fixture for this endpoint"}'
         }
       } else {
-        const useBaseline = req.headers['x-profile-build'] === 'before' ||
+        const useBaseline =
+          req.headers['x-profile-build'] === 'before' ||
           /(?:^|;\s*)__profile_build=before(?:;|$)/.test(req.headers.cookie || '')
-        const selectedRoot = baselineRoot && useBaseline
-          ? baselineRoot : root
+        const selectedRoot = baselineRoot && useBaseline ? baselineRoot : root
         let filename = path.resolve(selectedRoot, `.${decodeURIComponent(url.pathname)}`)
         if (filename !== selectedRoot && !filename.startsWith(selectedRoot + path.sep)) {
           res.writeHead(403).end()
           return
         }
-        if ((await fs.stat(filename)).isDirectory()) filename = path.join(filename, 'index.html')
+        try {
+          if ((await fs.stat(filename)).isDirectory()) filename = path.join(filename, 'index.html')
+        } catch (error) {
+          // The production build uses the SPA shell for client-side routes.
+          // Keep browser fixtures aligned with that hosting behavior for the
+          // movie routes exercised by the profiling checks without turning
+          // every unknown extensionless path into a successful shell response.
+          if (
+            !error ||
+            error.code !== 'ENOENT' ||
+            path.extname(url.pathname) ||
+            !/^\/movie\/\d+(?:\/|$)/.test(url.pathname)
+          )
+            throw error
+          filename = path.join(selectedRoot, 'index.html')
+        }
         type = contentTypes[path.extname(filename)] || 'application/octet-stream'
         body = await fs.readFile(filename)
         if (/\/PlayerComponent-[^/]+\.js$/.test(url.pathname) && delays.player) {
@@ -105,9 +156,12 @@ export async function createProfileServer({
         }
         if (type === 'text/html' || type === 'text/javascript') {
           body = body.toString()
-          for (const upstream of origins) body = body.replaceAll(upstream, `${origin}/__profile/api`)
+          for (const upstream of origins)
+            body = body.replaceAll(upstream, `${origin}/__profile/api`)
           if (type === 'text/html') {
-            body = body.replace('<head>', `<head><script>
+            body = body.replace(
+              '<head>',
+              `<head><script>
 window.__f5={lcp:null,lcpElement:null,shifts:[],tasks:[],layout:[]};
 const rect=node=>{const r=node?.getBoundingClientRect();return r?{x:r.x,y:r.y,width:r.width,height:r.height}:null};
 let pending=false;
@@ -124,9 +178,46 @@ for(const type of ['largest-contentful-paint','layout-shift','longtask']){
 }
 localStorage.clear();sessionStorage.clear();
 localStorage.setItem('api',JSON.stringify({backendMode:'local',backendModeUserSelected:true}));
-</script>`)
+</script>`
+            )
             // Keep layout; replace remote posters with a deterministic local image.
-            body = body.replace(/(src|data-src)="https?:\/\/[^"]+"/g, `$1="${origin}/__profile/poster.svg"`)
+            body = body.replace(
+              /(src|data-src)="https?:\/\/[^"]+"/g,
+              `$1="${posterBase ? `${posterBase}300x450` : `${origin}/__profile/poster.svg`}"`
+            )
+            if (posterBase) {
+              // Keep SSR and hydration data identical while simulating a known CDN.
+              body = body.replace(
+                /srcset="[^"]+"/g,
+                `srcset="${[100, 200, 300, 600].map((width) => `${posterBase}${width}x${width * 1.5} ${width}w`).join(', ')}"`
+              )
+            } else {
+              body = body.replace(/srcset="[^"]+"/g, `srcset="${origin}/__profile/poster.svg"`)
+            }
+            body = body.replace(
+              /(<script>window\.__INITIAL_STATE__=)(.*?)(<\/script>)/s,
+              (_, start, serialized, end) => {
+                const state = JSON.parse(JSON.parse(serialized))
+                const replacePosters = (value) => {
+                  if (!value || typeof value !== 'object') return
+                  for (const key of Object.keys(value)) {
+                    if (
+                      /poster/i.test(key) &&
+                      typeof value[key] === 'string' &&
+                      /^https?:/.test(value[key])
+                    ) {
+                      value[key] = posterBase
+                        ? `${posterBase}orig`
+                        : `${origin}/__profile/poster.svg`
+                    } else replacePosters(value[key])
+                  }
+                }
+                replacePosters(state)
+                return (
+                  start + JSON.stringify(JSON.stringify(state)).replaceAll('<', '\\u003c') + end
+                )
+              }
+            )
             // Avoid external DNS preconnects even though CSP blocks their resources.
             body = body.replace(/<link\b[^>]*rel="(?:preconnect|dns-prefetch)"[^>]*>/g, '')
           }
@@ -157,16 +248,19 @@ localStorage.setItem('api',JSON.stringify({backendMode:'local',backendModeUserSe
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   createProfileServer({
-    root: process.argv[2] || 'dist', port: Number(process.argv[3] || 4188),
+    root: process.argv[2] || 'dist',
+    port: Number(process.argv[3] || 4188),
     baselineRoot: process.argv[4],
     delays: {
       player: Number(process.env.PROFILE_PLAYER_DELAY_MS || 0),
       movie: Number(process.env.PROFILE_MOVIE_DELAY_MS || 0)
     }
-  }).then(() => {
-    console.log('Local profile fixture: http://127.0.0.1:' + (process.argv[3] || 4188))
-  }).catch((error) => {
-    console.error(error.message)
-    process.exitCode = 1
   })
+    .then(() => {
+      console.log('Local profile fixture: http://127.0.0.1:' + (process.argv[3] || 4188))
+    })
+    .catch((error) => {
+      console.error(error.message)
+      process.exitCode = 1
+    })
 }

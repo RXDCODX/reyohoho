@@ -1,5 +1,12 @@
+import noPosterImage from '@/assets/image-no-poster.gif'
+
 const KP_SMALL_POSTER_BASE = 'https://kinopoiskapiunofficial.tech/images/posters/kp_small'
 const KP_POSTER_BASE = 'https://kinopoiskapiunofficial.tech/images/posters/kp'
+// Only these variants have been verified on the Kinopoisk image CDN. Other hosts
+// and URLs with query strings (which may be signed) must keep their original URL.
+const YANDEX_POSTER =
+  /^(https?:\/\/(?:avatars\.mds\.yandex\.net|cdn[a-z0-9]+\.svc\.cdn\.yandex\.net)\/get-kinopoisk-image\/\d+\/[\w-]+\/)(?:orig|\d+x\d+|x\d+)$/
+const POSTER_WIDTHS = [100, 200, 300, 600]
 
 const normalizeUrl = (value) => {
   if (!value || typeof value !== 'string') return ''
@@ -12,19 +19,17 @@ export const optimizePosterUrl = (value) => {
   const url = normalizeUrl(value)
   if (!url) return ''
 
+  const base = url.match(YANDEX_POSTER)?.[1]
+  if (base) return `${base}300x450`
+  if (!/[?#]/.test(url) && url.startsWith(`${KP_POSTER_BASE}/`)) {
+    return url.replace(`${KP_POSTER_BASE}/`, `${KP_SMALL_POSTER_BASE}/`)
+  }
   return url
-    .replace(`${KP_POSTER_BASE}/`, `${KP_SMALL_POSTER_BASE}/`)
-    .replace(/\/x1000(?=($|[?#]))/, '/x300')
 }
 
 const getKpIdFromMovie = (movie = {}) => {
   return (
-    movie.kp_id ||
-    movie.kinopoisk_id ||
-    movie.id_kp ||
-    movie.id ||
-    movie.raw_data?.film_id ||
-    null
+    movie.kp_id || movie.kinopoisk_id || movie.id_kp || movie.id || movie.raw_data?.film_id || null
   )
 }
 
@@ -47,6 +52,50 @@ export const resolvePosterByMovie = (movie = {}) => {
   return ''
 }
 
+export const resolvePosterSourcesByMovie = (movie = {}) => {
+  const src = resolvePosterByMovie(movie)
+  const base = src.match(YANDEX_POSTER)?.[1]
+  return {
+    src,
+    srcset: base
+      ? POSTER_WIDTHS.map((width) => `${base}${width}x${(width * 3) / 2} ${width}w`).join(', ')
+      : undefined
+  }
+}
+
+// Matches MovieList's full-width grid and the 70px desktop sidebar in main.scss.
+// Explicit sizes select the right source before a lazy image has its final layout.
+const gridPosterSizes = (minWidth, gap) => {
+  const sizes = ['(max-width: 620px) 100px']
+  const horizontalPadding = 70 + 30
+  for (let columns = 1; columns <= 10; columns++) {
+    const maxViewport = (minWidth + gap) * (columns + 1) + horizontalPadding - gap - 1
+    if (maxViewport <= 620) continue
+    sizes.push(
+      `(max-width: ${maxViewport}px) calc((100vw - ${horizontalPadding + (columns - 1) * gap}px) / ${columns})`
+    )
+  }
+  return [...sizes, `${minWidth}px`].join(', ')
+}
+
+export const CARD_POSTER_SIZES = {
+  small: gridPosterSizes(180, 10),
+  medium: gridPosterSizes(240, 15),
+  large: gridPosterSizes(320, 20)
+}
+
+export const setImageFallback = ({ target: image }) => {
+  if (image.getAttribute('src') === noPosterImage) return
+  if (image.parentElement?.tagName === 'PICTURE') {
+    image.parentElement.querySelectorAll('source').forEach((source) => {
+      source.removeAttribute('srcset')
+    })
+  }
+  image.removeAttribute('srcset')
+  image.removeAttribute('sizes')
+  image.src = noPosterImage
+}
+
 export const resolvePosterSetByMovie = (movie = {}) => {
   const preview = resolvePosterByMovie(movie)
 
@@ -64,4 +113,3 @@ export const resolvePosterSetByMovie = (movie = {}) => {
     full: big || preview
   }
 }
-

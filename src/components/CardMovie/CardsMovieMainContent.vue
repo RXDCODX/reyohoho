@@ -2,8 +2,9 @@
   <div class="movie-poster-container" :class="[`card-size-${cardSize}`, `variant-${variant}`]">
     <div v-if="posterSrc" class="movie-poster-frame">
       <img
-        v-if="isServerRender || priority"
-        :src="posterSrc"
+        :srcset="posterSources.srcset"
+        :sizes="posterSources.srcset ? posterSizes : undefined"
+        :src="posterSources.src"
         class="movie-poster"
         :alt="movie.title ? `Постер ${movie.title}` : 'Постер фильма'"
         width="300"
@@ -11,17 +12,7 @@
         :loading="imageLoading"
         :fetchpriority="imageFetchPriority"
         decoding="async"
-      />
-      <img
-        v-else
-        v-lazy="posterSrc"
-        class="movie-poster"
-        :alt="movie.title ? `Постер ${movie.title}` : 'Постер фильма'"
-        width="300"
-        height="450"
-        :loading="imageLoading"
-        :fetchpriority="imageFetchPriority"
-        decoding="async"
+        @error="setImageFallback"
       />
       <DeleteButton
         v-if="!isMobile && (isHistory || isUserList) && showDelete"
@@ -72,7 +63,11 @@
 import DeleteButton from '@/components/buttons/DeleteButton.vue'
 import { TYPES_ENUM } from '@/constants'
 import { useMainStore } from '@/store/main'
-import { resolvePosterByMovie } from '@/utils/mediaUtils'
+import {
+  CARD_POSTER_SIZES,
+  resolvePosterSourcesByMovie,
+  setImageFallback
+} from '@/utils/mediaUtils'
 import { getRatingColor } from '@/utils/ratingUtils'
 import imdbLogoUrl from '@/assets/icon-imdb-logo.svg'
 import kpLogoUrl from '@/assets/icon-kp-logo.svg'
@@ -103,11 +98,13 @@ const {
 })
 
 const emit = defineEmits(['remove:from-history'])
-const isServerRender = import.meta.env.SSR
-
-const posterSrc = computed(() => {
-  return resolvePosterByMovie(movie)
-})
+const posterSources = computed(() => resolvePosterSourcesByMovie(movie))
+const posterSrc = computed(() => posterSources.value.src)
+const posterSizes = computed(() =>
+  variant === 'related'
+    ? `(max-width: 620px) ${{ small: 132, medium: 156, large: 172 }[cardSize.value] || 156}px, 200px`
+    : CARD_POSTER_SIZES[cardSize.value] || CARD_POSTER_SIZES.medium
+)
 const imageLoading = computed(() => (priority ? 'eager' : 'lazy'))
 const imageFetchPriority = computed(() => (priority ? 'high' : 'low'))
 

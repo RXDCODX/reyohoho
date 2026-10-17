@@ -1,28 +1,15 @@
 import { getApi } from '@/api/axios'
 
-// ===== Симуляция ошибки =====
-let isErrorSimulationEnabled = false // Переменная для включения/отключения симуляции ошибки
-const simulatedErrorCode = 500
-
-const simulateErrorIfNeeded = async () => {
-  if (isErrorSimulationEnabled && simulatedErrorCode) {
-    const status = parseInt(simulatedErrorCode, 10)
-    const error = new Error(`Симулированная ошибка ${status}`)
-    error.response = { status }
-    throw error
-  }
-}
-
-// Универсальный вызов запроса с симуляцией ошибки
 const apiCall = async (callFn) => {
-  await simulateErrorIfNeeded()
   const api = await getApi()
   return await callFn(api)
 }
 
 // ===== API-функции =====
 const apiSearch = async (searchTerm, requestConfig = {}) => {
-  const { data } = await apiCall((api) => api.get(`/search/${encodeURIComponent(searchTerm)}`, requestConfig))
+  const { data } = await apiCall((api) =>
+    api.get(`/search/${encodeURIComponent(searchTerm)}`, requestConfig)
+  )
   return data
 }
 
@@ -70,11 +57,6 @@ const getDiscussedMovies = async (type = 'hot', { page = null, limit = null } = 
   if (limit) params.set('limit', String(limit))
   const query = params.toString()
   const { data } = await apiCall((api) => api.get(`/discussed/${type}${query ? `?${query}` : ''}`))
-  return data
-}
-
-const getDons = async () => {
-  const { data } = await apiCall((api) => api.get('/get_dons'))
   return data
 }
 
@@ -196,11 +178,6 @@ const markAsCleanText = async (submissionId) => {
   return data
 }
 
-const getTwitchStream = async (username) => {
-  const { data } = await apiCall((api) => api.get(`/twitch/${username}`))
-  return data
-}
-
 const voteOnTiming = async (timingId, voteType) => {
   const { data } = await apiCall((api) =>
     api.post(`/timings/${timingId}/vote`, {
@@ -241,7 +218,6 @@ export {
   getShikiPlayers,
   getMovies,
   getDiscussedMovies,
-  getDons,
   getKpIDfromIMDB,
   getKpIDfromSHIKI,
   getRating,
@@ -262,15 +238,9 @@ export {
   approveTiming,
   rejectTiming,
   markAsCleanText,
-  getTwitchStream,
   voteOnTiming,
   getTimingVote,
   getMovieNote,
   saveMovieNote,
   deleteMovieNote
-}
-
-// ===== Функция для включения/выключения симуляции =====
-export const toggleErrorSimulation = (enabled) => {
-  isErrorSimulationEnabled = enabled
 }

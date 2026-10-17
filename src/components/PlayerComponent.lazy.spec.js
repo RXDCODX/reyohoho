@@ -1,7 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
 import { usePlayerStore } from '@/store/player'
 import PlayerComponent from './PlayerComponent.vue'
 
@@ -9,11 +8,7 @@ const optional = vi.hoisted(() => ({
   overlayEvaluated: vi.fn(),
   overlayCreated: vi.fn(),
   overlayStarted: vi.fn(),
-  overlayDisposed: vi.fn(),
-  obsEvaluated: vi.fn(),
-  obsCreated: vi.fn(),
-  obsConnected: vi.fn(),
-  obsDisconnected: vi.fn()
+  overlayDisposed: vi.fn()
 }))
 
 vi.mock('@/utils/playerVideoOverlayRuntime', () => {
@@ -22,27 +17,6 @@ vi.mock('@/utils/playerVideoOverlayRuntime', () => {
     createPlayerVideoOverlayRuntime: (...args) => {
       optional.overlayCreated(...args)
       return { start: optional.overlayStarted, dispose: optional.overlayDisposed }
-    }
-  }
-})
-
-vi.mock('@/utils/obsWebSocket', () => {
-  optional.obsEvaluated()
-  return {
-    OBSWebSocket: class {
-      constructor() {
-        optional.obsCreated()
-      }
-      setCallbacks(callbacks) {
-        this.callbacks = callbacks
-      }
-      async connect(...args) {
-        optional.obsConnected(...args)
-        this.callbacks.onConnect?.()
-      }
-      disconnect() {
-        optional.obsDisconnected()
-      }
     }
   }
 })
@@ -92,7 +66,7 @@ describe('PlayerComponent optional runtime boundaries', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps web playback light and loads desktop overlay and OBS only on activation', async () => {
+  it('keeps web playback light and loads the desktop overlay only on activation', async () => {
     const web = setup(true)
     await flushPromises()
     expect(web.wrapper.get('iframe').attributes('src')).toBe('https://player.example/embed/123')
@@ -109,8 +83,6 @@ describe('PlayerComponent optional runtime boundaries', () => {
       ])
     )
     expect(optional.overlayEvaluated).not.toHaveBeenCalled()
-    expect(optional.obsEvaluated).not.toHaveBeenCalled()
-    expect(typeof window.connectToOBS).toBe('function')
     web.wrapper.unmount()
     wrappers.pop()
 
@@ -120,27 +92,15 @@ describe('PlayerComponent optional runtime boundaries', () => {
     await desktop.wrapper.get('iframe').trigger('load')
     await vi.dynamicImportSettled()
     expect(optional.overlayEvaluated).not.toHaveBeenCalled()
-    expect(optional.obsEvaluated).not.toHaveBeenCalled()
 
     await desktop.wrapper.get('button.overlay-btn').trigger('click')
     await vi.dynamicImportSettled()
     expect(optional.overlayEvaluated).toHaveBeenCalledTimes(1)
     expect(optional.overlayCreated).toHaveBeenCalledTimes(1)
     expect(optional.overlayStarted).toHaveBeenCalledTimes(1)
-    expect(optional.obsEvaluated).not.toHaveBeenCalled()
-
-    desktop.playerStore.updateObsSettings({ enabled: true, password: 'saved' })
-    await vi.dynamicImportSettled()
-    await nextTick()
-    expect(optional.obsEvaluated).toHaveBeenCalledTimes(1)
-    expect(optional.obsCreated).toHaveBeenCalledTimes(1)
-    expect(optional.obsConnected).toHaveBeenCalledWith('localhost', 4455, 'saved')
-    expect(desktop.playerStore.obsSettings.connected).toBe(true)
 
     desktop.wrapper.unmount()
     wrappers.pop()
     expect(optional.overlayDisposed).toHaveBeenCalledTimes(1)
-    expect(optional.obsDisconnected).toHaveBeenCalledTimes(1)
-    expect(window.connectToOBS).toBeUndefined()
   })
 })

@@ -72,9 +72,7 @@ try {
           assert.equal(initialCommentRequests, 0, 'offscreen comments must not fetch data')
           assert(
             !initialResources.some(({ path }) =>
-              /\/(?:Comments|PlayerModal|MovieSceneTools|obsWebSocket|playerVideoOverlayRuntime)-/.test(
-                path
-              )
+              /\/(?:Comments|PlayerModal|MovieSceneTools|playerVideoOverlayRuntime)-/.test(path)
             ),
             'optional movie and desktop tools must not load before use'
           )

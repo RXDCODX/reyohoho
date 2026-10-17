@@ -1,9 +1,6 @@
 import axios from 'axios'
 import { createPublicDataCache } from './publicDataCache'
 
-let isErrorSimulationEnabled = false
-const simulatedErrorCode = 500
-
 const KINOBOX_BASE_URL = import.meta.env.VITE_KINOBOX_API_URL || 'https://api.reyhoho.fun'
 // All Kinobox content uses the same Worker; a separate search override remains supported.
 const KINOBOX_SEARCH_BASE_URL = import.meta.env.VITE_KINOBOX_SEARCH_API_URL || KINOBOX_BASE_URL
@@ -12,39 +9,38 @@ const api = axios.create({
   baseURL: KINOBOX_BASE_URL
 })
 
-const simulateErrorIfNeeded = async () => {
-  if (isErrorSimulationEnabled && simulatedErrorCode) {
-    const status = parseInt(simulatedErrorCode, 10)
-    const error = new Error(`Simulated error ${status}`)
-    error.response = { status }
-    throw error
-  }
-}
-
 const publicData = createPublicDataCache()
 const publicGet = async (path, config, ttl, validate) => {
-  await simulateErrorIfNeeded()
   const { signal, ...requestConfig } = config
-  const key = JSON.stringify([requestConfig.baseURL || KINOBOX_BASE_URL, path, requestConfig.params || {}])
+  const key = JSON.stringify([
+    requestConfig.baseURL || KINOBOX_BASE_URL,
+    path,
+    requestConfig.params || {}
+  ])
   const data = await publicData(
     key,
     async (requestSignal) =>
-      (await api.get(path, { ...requestConfig, ...(requestSignal ? { signal: requestSignal } : {}) })).data,
+      (
+        await api.get(path, {
+          ...requestConfig,
+          ...(requestSignal ? { signal: requestSignal } : {})
+        })
+      ).data,
     ttl,
     {
       signal,
       validate,
-    // No shared module cache during SSR or for customized/authenticated requests.
-    bypass:
-      import.meta.env.SSR ||
-      Boolean(
-        requestConfig.headers ||
-        requestConfig.auth ||
-        requestConfig.adapter ||
-        requestConfig.transformResponse ||
-        requestConfig.cancelToken ||
-        requestConfig.withCredentials
-      )
+      // No shared module cache during SSR or for customized/authenticated requests.
+      bypass:
+        import.meta.env.SSR ||
+        Boolean(
+          requestConfig.headers ||
+          requestConfig.auth ||
+          requestConfig.adapter ||
+          requestConfig.transformResponse ||
+          requestConfig.cancelToken ||
+          requestConfig.withCredentials
+        )
     }
   )
   return { data }
@@ -354,8 +350,4 @@ export {
   getRandomMovie,
   normalizeKinoboxMovie,
   normalizeKinoboxSearchResponse
-}
-
-export const toggleErrorSimulation = (enabled) => {
-  isErrorSimulationEnabled = enabled
 }

@@ -29,7 +29,6 @@ const pickMainPersistedState = (state) => ({
   submitterUsername: state.submitterUsername,
   cardSize: state.cardSize,
   isStreamerMode: state.isStreamerMode,
-  rememberScrollPosition: state.rememberScrollPosition,
   contentApiProvider: state.contentApiProvider,
   searchApiProvider: state.searchApiProvider,
   sidebarAutoHide: state.sidebarAutoHide,
@@ -106,7 +105,9 @@ describe('Базовы persist тесты для main', () => {
 
     expect(store.contentApiProvider).toBe('kinobox')
     expect(window.localStorage.getItem(CONTENT_PROVIDER_DDBB_DEFAULT_MIGRATION_KEY)).toBe('done')
-    expect(JSON.parse(window.localStorage.getItem(MAIN_STORE_NAME)).contentApiProvider).toBe('kinobox')
+    expect(JSON.parse(window.localStorage.getItem(MAIN_STORE_NAME)).contentApiProvider).toBe(
+      'kinobox'
+    )
   })
 
   it('Не перезаписывает Kinobox после выполненной миграции', () => {
@@ -120,9 +121,13 @@ describe('Базовы persist тесты для main', () => {
 
   it('Переводит сохранённый KinoBD на Kinobox даже после старой миграции', () => {
     window.localStorage.setItem(CONTENT_PROVIDER_DDBB_DEFAULT_MIGRATION_KEY, 'done')
-    window.localStorage.setItem(MAIN_STORE_NAME, JSON.stringify({
-      contentApiProvider: 'kinobd', searchApiProvider: 'kinobd'
-    }))
+    window.localStorage.setItem(
+      MAIN_STORE_NAME,
+      JSON.stringify({
+        contentApiProvider: 'kinobd',
+        searchApiProvider: 'kinobd'
+      })
+    )
     const store = useMainStore()
     expect(store.contentApiProvider).toBe('kinobox')
     expect(store.searchApiProvider).toBe('kinobox')
@@ -255,16 +260,6 @@ describe('Тесты миграций на новый способ хранен�
         highlightTimings: true,
         autoBlurTimings: true,
         fontSize: 18
-      },
-      obsSettings: {
-        enabled: false,
-        host: 'localhost',
-        port: 4455,
-        password: '',
-        connected: false,
-        filtersFound: [],
-        selectedFilterId: null,
-        showObsInOverlay: true
       }
     },
     isHistoryAllowed: true
@@ -373,7 +368,6 @@ describe('Тесты миграций на новый способ хранен�
         submitterUsername: '',
         cardSize: 'medium',
         isStreamerMode: true,
-        rememberScrollPosition: true,
         contentApiProvider: 'kinobox',
         searchApiProvider: 'kinobox',
         sidebarAutoHide: false,

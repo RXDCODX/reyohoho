@@ -42,7 +42,7 @@ describe('offline shell dependency selection', () => {
       'workbox-helper.js': chunk('workbox-helper.js'),
       'movie.js': chunk('movie.js', ['shared.js'], {
         facadeModuleId: 'C:\\repo\\src\\components\\MovieInfo.vue',
-        dynamicImports: ['comments.js', 'dialog.js', 'scenes.js', 'obs.js', 'overlay.js'],
+        dynamicImports: ['comments.js', 'dialog.js', 'scenes.js', 'overlay.js'],
         viteMetadata: {
           importedCss: new Set(['movie.css']),
           importedAssets: new Set(['poster.webp'])
@@ -53,7 +53,6 @@ describe('offline shell dependency selection', () => {
       'scenes.js': chunk('scenes.js', [], {
         facadeModuleId: '/repo/src/components/movie/MovieSceneTools.vue'
       }),
-      'obs.js': chunk('obs.js', [], { facadeModuleId: '/repo/src/utils/obsWebSocket.js' }),
       'overlay.js': chunk('overlay.js', [], {
         facadeModuleId: '/repo/src/utils/playerVideoOverlayRuntime.js'
       }),
@@ -95,7 +94,6 @@ describe('offline shell dependency selection', () => {
       'comments.css',
       'dialog.js',
       'scenes.js',
-      'obs.js',
       'overlay.js',
       'settings.js',
       'unrelated.png',

@@ -23,22 +23,31 @@ afterEach(() => {
 })
 
 describe('Kinobox content proxy routing', () => {
-  it.each([0, 0.999])('selects a film from valid top pages at random boundary %s', async (random) => {
-    vi.spyOn(Math, 'random').mockReturnValue(random)
-    const { getRandomMovie } = await import('./movies.kinobox')
-    mocks.get.mockResolvedValue({ data: { data: { items: [
-      { movie: { id: 301, title: { russian: 'Матрица' } } },
-      { movie: { id: 302, title: { russian: 'Другой фильм' } } }
-    ] } } })
-    expect(await getRandomMovie()).toMatchObject({ kp_id: random === 0 ? 301 : 302 })
-    expect(mocks.get).toHaveBeenCalledWith(
-      '/api/kinopoisk/top',
-      expect.objectContaining({
-        timeout: 20000,
-        params: { type: 'movie', page: random === 0 ? 1 : 5, limit: 50 }
+  it.each([0, 0.999])(
+    'selects a film from valid top pages at random boundary %s',
+    async (random) => {
+      vi.spyOn(Math, 'random').mockReturnValue(random)
+      const { getRandomMovie } = await import('./movies.kinobox')
+      mocks.get.mockResolvedValue({
+        data: {
+          data: {
+            items: [
+              { movie: { id: 301, title: { russian: 'Матрица' } } },
+              { movie: { id: 302, title: { russian: 'Другой фильм' } } }
+            ]
+          }
+        }
       })
-    )
-  })
+      expect(await getRandomMovie()).toMatchObject({ kp_id: random === 0 ? 301 : 302 })
+      expect(mocks.get).toHaveBeenCalledWith(
+        '/api/kinopoisk/top',
+        expect.objectContaining({
+          timeout: 20000,
+          params: { type: 'movie', page: random === 0 ? 1 : 5, limit: 50 }
+        })
+      )
+    }
+  )
   it('rejects an empty or unusable random pool rather than returning a broken watch link', async () => {
     const { getRandomMovie } = await import('./movies.kinobox')
     mocks.get.mockResolvedValue({ data: { data: { items: [] } } })
@@ -104,8 +113,12 @@ describe('Kinobox content proxy routing', () => {
     )
     expect(results[0]).toMatchObject({ id: 301, title: 'Матрица' })
   })
-  it('passes cancellation signals through the Kinobox and DDBB player transports', async () => {
-    const { getPlayersRaw } = await import('./movies.kinobox')
+  it.each([
+    ['Kinobox', () => import('./movies.kinobox')],
+    ['DDBB', () => import('./movies.ddbb')],
+    ['DDBB Live', () => import('./movies.ddbb-live')]
+  ])('passes cancellation signals through the %s player transport', async (_name, loadAdapter) => {
+    const { getPlayersRaw } = await loadAdapter()
     const controller = new AbortController()
     mocks.get.mockResolvedValue({ data: { data: [] } })
     await getPlayersRaw(301, { signal: controller.signal })

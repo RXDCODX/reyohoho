@@ -1,4 +1,4 @@
-import { computed, nextTick, reactive, ref } from 'vue'
+import { nextTick, reactive, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPlayerVideoOverlayRuntime } from './playerVideoOverlayRuntime'
 
@@ -20,7 +20,6 @@ describe('playerVideoOverlayRuntime', () => {
         fontSize: 18,
         autoBlurTimings: true
       },
-      obsSettings: { enabled: false, showObsInOverlay: true },
       updateVideoOverlay(value) {
         this.videoOverlayEnabled2 = value
       },
@@ -28,12 +27,6 @@ describe('playerVideoOverlayRuntime', () => {
         this.overlaySettings = { ...this.overlaySettings, ...value }
       }
     })
-    const obs = {
-      obsSettings: computed(() => playerStore.obsSettings),
-      obsConnected: ref(false),
-      obsFiltersFound: ref([]),
-      obsWebSocket: ref(null)
-    }
     const props = reactive({
       movieInfo: {
         title: 'Example movie',
@@ -49,8 +42,7 @@ describe('playerVideoOverlayRuntime', () => {
       playerIframe: ref(iframe),
       props,
       enableBlur,
-      disableBlur,
-      obs
+      disableBlur
     })
     runtimes.push(runtime)
     return { runtime, iframe, iframeDoc, video, playerStore, props, enableBlur, disableBlur }
@@ -136,6 +128,54 @@ describe('playerVideoOverlayRuntime', () => {
     runtime.dispose()
     expect(disableBlur).toHaveBeenCalledTimes(1)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['overlayNudityTimings', 'selectedNudityTimings'])(
+    'applies and releases local blur at the selected scene boundaries from %s',
+    async (selection) => {
+      const { runtime, video, enableBlur, disableBlur } = setup()
+      window[selection] = ['1']
+      Object.defineProperty(video, 'paused', { value: false })
+      video.currentTime = 9
+      runtime.start()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(enableBlur).not.toHaveBeenCalled()
+
+      video.currentTime = 10
+      await vi.advanceTimersByTimeAsync(100)
+      expect(enableBlur).toHaveBeenCalledTimes(1)
+      video.currentTime = 20
+      await vi.advanceTimersByTimeAsync(500)
+      expect(enableBlur).toHaveBeenCalledTimes(1)
+      expect(disableBlur).not.toHaveBeenCalled()
+
+      video.currentTime = 21
+      await vi.advanceTimersByTimeAsync(100)
+      expect(disableBlur).toHaveBeenCalledTimes(1)
+      runtime.dispose()
+      expect(disableBlur).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('releases local blur when auto-blur is disabled or the selected scene is cleared', async () => {
+    const { runtime, video, playerStore, enableBlur, disableBlur } = setup()
+    window.overlayNudityTimings = [1]
+    Object.defineProperty(video, 'paused', { value: false })
+    video.currentTime = 15
+    runtime.start()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(enableBlur).toHaveBeenCalledTimes(1)
+
+    playerStore.updateOverlaySettings({ autoBlurTimings: false })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(disableBlur).toHaveBeenCalledTimes(1)
+    playerStore.updateOverlaySettings({ autoBlurTimings: true })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(enableBlur).toHaveBeenCalledTimes(2)
+
+    window.overlayNudityTimings = []
+    await vi.advanceTimersByTimeAsync(100)
+    expect(disableBlur).toHaveBeenCalledTimes(2)
   })
 
   it('uses one creation path across enable and settings changes', async () => {

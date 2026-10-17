@@ -5414,11 +5414,6 @@ vue-eslint-parser@^10.4.0:
     esquery "^1.6.0"
     semver "^7.6.3"
 
-vue-lazyload@^3.0.0:
-  version "3.0.0"
-  resolved "https://registry.npmjs.org/vue-lazyload/-/vue-lazyload-3.0.0.tgz"
-  integrity sha512-h2keL/Rj550dLgesgOtXJS9qOiSMmuJNeVlfNAYV1/IYwOQYaWk5mFJlwRxmZDK9YC5gECcFLYYj7z1lKSf9ug==
-
 vue-router@^5.1.0:
   version "5.1.0"
   resolved "https://registry.yarnpkg.com/vue-router/-/vue-router-5.1.0.tgz#0e5497c80ec3a60dc59ad385813bd15fb91a2915"

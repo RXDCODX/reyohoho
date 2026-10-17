@@ -319,7 +319,23 @@
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <img :src="moviePosterUrl" alt="Постер фильма" class="movie-poster" />
+                <picture>
+                  <source
+                    media="(min-width: 769px)"
+                    :srcset="moviePosterSources.srcset || moviePosterUrl"
+                    sizes="(max-width: 2129px) max(250px, 15.5vw), 330px"
+                  />
+                  <img
+                    src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+                    width="300"
+                    height="450"
+                    loading="lazy"
+                    decoding="async"
+                    alt="Постер фильма"
+                    class="movie-poster"
+                    @error="setImageFallback"
+                  />
+                </picture>
               </a>
             </div>
             <div class="details-container">
@@ -606,7 +622,12 @@ import { useTrailerStore } from '@/store/trailer'
 import DeferredComments from '@/components/DeferredComments.vue'
 import { getRatingColor } from '@/utils/ratingUtils'
 import { buildMovieSeo, getMovieSeoEntry, getMovieSeoPath, getMovieSeoSlug } from '@/utils/movieSeo'
-import { optimizePosterUrl, resolvePosterByMovie } from '@/utils/mediaUtils'
+import {
+  optimizePosterUrl,
+  resolvePosterByMovie,
+  resolvePosterSourcesByMovie,
+  setImageFallback
+} from '@/utils/mediaUtils'
 import { formatProductionStatus } from '@/utils/movieStatus'
 import { formatMovieDuration } from '@/utils/movieDuration'
 import { isRequestCanceled } from '@/utils/requestCancellation'
@@ -707,7 +728,8 @@ const showNoteEditor = ref(false)
 const noteText = ref('')
 const isSavingNote = ref(false)
 const isDeletingNote = ref(false)
-const moviePosterUrl = computed(() => resolvePosterByMovie(movieInfo.value || {}))
+const moviePosterSources = computed(() => resolvePosterSourcesByMovie(movieInfo.value || {}))
+const moviePosterUrl = computed(() => moviePosterSources.value.src)
 
 const shouldShowRedTimings = computed(() => {
   return Array.isArray(movieInfo.value?.nudity_timings) && movieInfo.value.nudity_timings.length > 0

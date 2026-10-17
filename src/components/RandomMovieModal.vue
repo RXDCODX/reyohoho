@@ -24,12 +24,16 @@
           <div v-else-if="movie" class="movie-content">
             <div class="movie-poster-section">
               <img
-                v-lazy="movie.cover"
+                :srcset="posterSources.srcset"
+                :sizes="posterSources.srcset ? '(max-width: 768px) 120px, 180px' : undefined"
+                :src="posterSources.src"
+                loading="lazy"
+                decoding="async"
                 :alt="movie.title ? `Постер ${movie.title}` : 'Постер фильма'"
                 class="movie-poster"
                 width="300"
                 height="450"
-                @error="handleImageError"
+                @error="setImageFallback"
               />
             </div>
 
@@ -72,10 +76,11 @@
                 </span>
               </div>
 
-              <div v-if="movie.budget || movie.fees_world || movie.fees_russia" class="movie-finances">
-                <div v-if="movie.budget">
-                  <strong>Бюджет:</strong> {{ movie.budget }}
-                </div>
+              <div
+                v-if="movie.budget || movie.fees_world || movie.fees_russia"
+                class="movie-finances"
+              >
+                <div v-if="movie.budget"><strong>Бюджет:</strong> {{ movie.budget }}</div>
                 <div v-if="movie.fees_world">
                   <strong>Сборы в мире:</strong> {{ movie.fees_world }}
                 </div>
@@ -150,7 +155,7 @@
 </template>
 
 <script setup>
-import noPosterImage from '@/assets/image-no-poster.gif'
+import { resolvePosterSourcesByMovie, setImageFallback } from '@/utils/mediaUtils'
 import { computed } from 'vue'
 import { getMovieSeoPath } from '@/utils/movieSeo'
 import imdbLogoUrl from '@/assets/icon-imdb-logo.svg'
@@ -167,6 +172,7 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'get-new-movie'])
 const moviePath = computed(() => getMovieSeoPath(props.movie || {}))
+const posterSources = computed(() => resolvePosterSourcesByMovie(props.movie || {}))
 
 const close = () => {
   emit('close')
@@ -208,10 +214,6 @@ const formatDate = (dateString) => {
     month: 'long',
     day: 'numeric'
   })
-}
-
-const handleImageError = (event) => {
-  event.target.src = noPosterImage
 }
 </script>
 

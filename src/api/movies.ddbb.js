@@ -1,9 +1,6 @@
 import axios from 'axios'
 import { getSafePlayerUrl } from '@/utils/playerSecurity'
 
-let isErrorSimulationEnabled = false
-const simulatedErrorCode = 500
-
 const DDBB_BASE_URL = import.meta.env.VITE_DDBB_API_URL || 'https://p2.ddbb.lol'
 
 const api = axios.create({
@@ -13,17 +10,7 @@ const api = axios.create({
   }
 })
 
-const simulateErrorIfNeeded = async () => {
-  if (isErrorSimulationEnabled && simulatedErrorCode) {
-    const status = parseInt(simulatedErrorCode, 10)
-    const error = new Error(`Simulated error ${status}`)
-    error.response = { status }
-    throw error
-  }
-}
-
 const apiCall = async (callFn) => {
-  await simulateErrorIfNeeded()
   return await callFn(api)
 }
 
@@ -65,7 +52,6 @@ const toPlayersMap = (
         raw_data: provider
       }
     }
-
   }
 
   return players
@@ -92,7 +78,3 @@ const getPlayers = async (kpId, options = {}) => {
 }
 
 export { getPlayers, getPlayersRaw, toPlayersMap }
-
-export const toggleErrorSimulation = (enabled) => {
-  isErrorSimulationEnabled = enabled
-}

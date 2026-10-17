@@ -20,16 +20,6 @@ export const usePlayerStore = defineStore(PLAYER_STORE_NAME, {
       highlightTimings: true,
       autoBlurTimings: true,
       fontSize: 18
-    },
-    obsSettings: {
-      enabled: false,
-      host: 'localhost',
-      port: 4455,
-      password: '',
-      connected: false,
-      filtersFound: [],
-      selectedFilterId: null,
-      showObsInOverlay: true
     }
   }),
 
@@ -70,20 +60,24 @@ export const usePlayerStore = defineStore(PLAYER_STORE_NAME, {
     },
     updateOverlaySettings(settings) {
       this.overlaySettings = { ...this.overlaySettings, ...settings }
-    },
-    updateObsSettings(settings) {
-      this.obsSettings = { ...this.obsSettings, ...settings }
-    },
-    setObsConnected(connected) {
-      this.obsSettings.connected = connected
-    },
-    setObsSelectedFilter(filterId) {
-      this.obsSettings.selectedFilterId = filterId
     }
   },
 
   persist: {
     key: PLAYER_STORE_NAME,
-    beforeHydrate: beforeHydrateLegacyVuex
+    pick: [
+      'preferredPlayer',
+      'aspectRatio',
+      'isCentered',
+      'showFavoriteTooltip',
+      'kinobdSourceByKpId',
+      'compressorEnabled',
+      'mirrorEnabled',
+      'videoOverlayEnabled2',
+      'overlaySettings'
+    ],
+    beforeHydrate: beforeHydrateLegacyVuex,
+    // Rewrite existing and migrated data with only supported preferences.
+    afterHydrate: ({ store }) => store.$persist()
   }
 })

@@ -15,7 +15,6 @@ import {
   getDurationProgressMarkup,
   getMainInfoStyle,
   getMovieTitleStyle,
-  getObsStatusMarkup,
   getOverlayBaseStyle,
   getOverlayButtonStyle,
   getOverlayPositionStyle,
@@ -35,10 +34,8 @@ export function createPlayerVideoOverlayRuntime({
   playerIframe,
   props,
   enableBlur,
-  disableBlur,
-  obs
+  disableBlur
 }) {
-  const { obsSettings, obsConnected, obsFiltersFound, obsWebSocket } = obs
   let videoPositionInterval = null
   const timeouts = new Set()
   const overlayIntervals = new Set()
@@ -47,9 +44,6 @@ export function createPlayerVideoOverlayRuntime({
   let disposed = false
   let settingsModal = null
   let blurApplied = false
-  let blurAppliedWithObs = false
-  let blurredObsClient = null
-  let blurredObsFilter = null
 
   const schedule = (callback, delay) => {
     const timer = setTimeout(() => {
@@ -298,40 +292,13 @@ export function createPlayerVideoOverlayRuntime({
               }
             }
 
-            // Use OBS blur if enabled and connected, otherwise use internal blur
-            if (
-              obsSettings.value.enabled &&
-              obsConnected.value &&
-              obsSettings.value.selectedFilterId
-            ) {
-              // OBS blur logic
-              if (shouldBlur && !blurApplied) {
-                blurredObsClient = obsWebSocket.value
-                blurredObsFilter = obsSettings.value.selectedFilterId
-                blurredObsClient?.enableBlur(blurredObsFilter)
-                blurApplied = true
-                blurAppliedWithObs = true
-                debugLog('OBS Blur applied at', currentTime.toFixed(2), 'seconds')
-              } else if (!shouldBlur && blurApplied) {
-                blurredObsClient?.disableBlur(blurredObsFilter)
-                blurApplied = false
-                blurAppliedWithObs = false
-                debugLog('OBS Blur removed at', currentTime.toFixed(2), 'seconds')
-              }
-            } else if (shouldBlur && !blurApplied && isElectron.value) {
-              // Internal blur logic
+            if (shouldBlur && !blurApplied && isElectron.value) {
               enableBlur()
               blurApplied = true
-              blurAppliedWithObs = false
               debugLog('Blur applied at', currentTime.toFixed(2), 'seconds')
             } else if (!shouldBlur && blurApplied) {
-              if (blurAppliedWithObs) {
-                blurredObsClient?.disableBlur(blurredObsFilter)
-              } else {
-                disableBlur()
-              }
+              disableBlur()
               blurApplied = false
-              blurAppliedWithObs = false
               debugLog('Blur removed at', currentTime.toFixed(2), 'seconds')
             }
           }
@@ -1005,31 +972,6 @@ export function createPlayerVideoOverlayRuntime({
       progressHtml = getDurationProgressMarkup({ currentTimeFormatted, totalTimeFormatted })
     }
 
-    if (obsSettings.value.enabled && obsSettings.value.showObsInOverlay) {
-      let statusText = 'Отключен'
-      const statusColor = '#999999'
-
-      if (obsConnected.value) {
-        if (obsSettings.value.selectedFilterId) {
-          const selectedFilter = obsFiltersFound.value.find(
-            (f) => f.id === obsSettings.value.selectedFilterId
-          )
-          if (selectedFilter) {
-            statusText = `${selectedFilter.filterName} (${selectedFilter.sceneName})`
-          } else {
-            statusText = 'Фильтр не найден'
-          }
-        } else if (obsFiltersFound.value.length > 0) {
-          statusText = 'Фильтр не выбран'
-        } else {
-          statusText = 'Фильтры не найдены'
-        }
-      }
-
-      const obsStatusHtml = getObsStatusMarkup({ statusColor, statusText })
-      progressHtml = progressHtml ? `${progressHtml} ${obsStatusHtml}` : obsStatusHtml
-    }
-
     if (progressHtml) {
       videoProgress.style.display = 'flex'
       videoProgress.innerHTML = progressHtml
@@ -1159,8 +1101,7 @@ export function createPlayerVideoOverlayRuntime({
     videoPositionInterval = null
     removeVideoOverlay()
     if (blurApplied) {
-      if (blurAppliedWithObs) blurredObsClient?.disableBlur(blurredObsFilter)
-      else disableBlur()
+      disableBlur()
       blurApplied = false
     }
   }

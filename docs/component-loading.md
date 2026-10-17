@@ -1,6 +1,6 @@
 # Movie and player loading — 2026-10-16
 
-`MovieInfo.vue` and `PlayerComponent.vue` now keep optional scene, OBS, and
+`MovieInfo.vue` and `PlayerComponent.vue` now keep optional scene and
 Electron overlay implementations outside the initial movie dependency graph.
 The change also removes unused code and repeated handlers; splitting files alone
 would not reduce the total build.
@@ -11,10 +11,6 @@ would not reduce the total build.
   timing-panel click. Guide and vote requests start when their panel opens. The
   component stays mounted after closing, preserving timing selections. Its form,
   report, submitter, and moderation dialogs remain separate dynamic imports.
-- `usePlayerOBS.js` registers the existing window API without loading the OBS
-  implementation. `obsWebSocket.js` loads when OBS is enabled in saved settings
-  or a caller explicitly connects. Concurrent connection attempts share one
-  promise; disabled or disposed instances discard late imports and callbacks.
 - `usePlayerVideoOverlay.js` loads `playerVideoOverlayRuntime.js` only in Electron,
   after the iframe loads, when the overlay is enabled or selected timings require
   it. Changing playback or unmounting disposes the runtime and invalidates pending
@@ -31,10 +27,12 @@ Scene requests ignore stale responses after navigation, panel changes, or
 unmounting, with token guards on account-specific actions. Staff are grouped once
 by profession instead of repeatedly filtering the full array in the template.
 
-The unused MovieInfo OBS settings controller and modal, unreachable controls,
-duplicate styles, redundant listeners, and obsolete OBS methods were removed.
-The player retains its OBS connection API. Cleanup now covers connection and
-request promises, timeout handles, overlay observers, listeners, and retry timers.
+The OBS integration, including its WebSocket client, window APIs, settings,
+external filters, and overlay status, has been removed. Electron local blur,
+scene timings, and overlay settings remain. Previously saved player preferences
+are preserved while retired settings are excluded from hydration and persistence.
+Unused MovieInfo controls, duplicate styles, and redundant listeners were also
+removed. Cleanup covers timeout handles, overlay observers, listeners, and retry timers.
 Refreshing movie data after a timing edit keeps the existing player iframe
 mounted instead of replacing it with the loading skeleton.
 
@@ -69,7 +67,6 @@ code; the smaller overall build reflects removed code and styles.
 | MovieSceneTools JS          | 16,739 | 5,958 |
 | MovieSceneTools CSS         |  9,649 | 2,022 |
 | Electron overlay runtime JS | 29,707 | 7,826 |
-| OBS WebSocket JS            |  7,364 | 2,253 |
 
 ## Reproduce and verify
 
@@ -119,8 +116,8 @@ responses, votes and their styles, parser output, timing submission without
 replacing the iframe, and offline navigation/update behavior. No page errors or
 horizontal overflow were recorded.
 
-Unit tests exercise OBS WebSocket authentication/disposal and deferred Electron
-overlay lifecycle with controlled fakes. Live OBS filter effects and native
-Electron fullscreen overlays still require an integration run in those apps.
+Unit tests exercise deferred Electron overlay lifecycle, local scene blur, and
+preservation of player preferences with controlled fakes. Native Electron
+fullscreen overlays still require an integration run in the desktop app.
 Local raw reports and screenshots are under the ignored `reports-browser/`
 directory (`component-sizes.json`, `deferred-movie.json`, `movie-scenes.json`).

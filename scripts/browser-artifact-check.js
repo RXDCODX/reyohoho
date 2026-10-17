@@ -102,14 +102,9 @@ try {
   })
   assert(
     !precacheUrls.some((url) =>
-      [
-        'Comments',
-        'PlayerModal',
-        'Settings',
-        'MovieSceneTools',
-        'obsWebSocket',
-        'playerVideoOverlayRuntime'
-      ].some((name) => url.includes('/' + name + '-'))
+      ['Comments', 'PlayerModal', 'Settings', 'MovieSceneTools', 'playerVideoOverlayRuntime'].some(
+        (name) => url.includes('/' + name + '-')
+      )
     ),
     'optional comments, dialogs, routes and movie tools must not enter the initial precache'
   )

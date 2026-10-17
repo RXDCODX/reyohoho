@@ -1,5 +1,3 @@
-import noPosterImage from '@/assets/image-no-poster.gif'
-
 export const TYPES_ENUM = {
   FILM: 'Фильм',
   TV_SERIES: 'Сериал',
@@ -20,29 +18,6 @@ export const USER_LIST_TYPES_ENUM = {
 }
 
 export const DEFAULT_ACTIVE_TIME = '24h'
-
-export const LAZY_LOADING_CONFIG = {
-  preLoad: 1.3,
-  error: noPosterImage,
-  attempt: 2,
-  observer: true,
-  observerOptions: {
-    rootMargin: '0px',
-    threshold: 0.1
-  },
-  adapter: {
-    loaded({ el }) {
-      el.classList.add('loaded')
-      el.classList.remove('loading')
-    },
-    loading({ el }) {
-      el.classList.add('loading')
-    },
-    error({ el }) {
-      el.classList.add('error')
-    }
-  }
-}
 
 export const handleApiError = (error) => {
   if (error.code === 'ECONNABORTED') {

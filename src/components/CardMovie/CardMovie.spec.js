@@ -23,14 +23,7 @@ const mountCard = (card = movie) => {
     props: { movie: card, isHistory: true },
     global: {
       plugins: [pinia],
-      stubs: { RouterLink: { template: '<a><slot /></a>' } },
-      directives: {
-        lazy: {
-          mounted: (element, binding) => {
-            element.src = binding.value
-          }
-        }
-      }
+      stubs: { RouterLink: { template: '<a><slot /></a>' } }
     }
   })
   return useMainStore(pinia)

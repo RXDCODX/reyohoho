@@ -8,7 +8,6 @@ export function usePlayerVideoOverlay({
   props,
   enableBlur,
   disableBlur,
-  obs,
   loadOverlay = () => import('@/utils/playerVideoOverlayRuntime')
 }) {
   const videoOverlayEnabled2 = computed({
@@ -72,8 +71,7 @@ export function usePlayerVideoOverlay({
           playerIframe,
           props,
           enableBlur,
-          disableBlur,
-          obs
+          disableBlur
         })
         created.start()
         runtime = created

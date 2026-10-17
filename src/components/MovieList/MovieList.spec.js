@@ -135,13 +135,6 @@ describe('Тесты компонента MovieList', () => {
         ],
         stubs: {
           SpinnerLoading
-        },
-        directives: {
-          lazy: {
-            mounted(el, binding) {
-              el.src = binding.value
-            }
-          }
         }
       },
       props: { moviesList: movies, isHistory, loading },
@@ -614,7 +607,9 @@ describe('Тесты компонента MovieList', () => {
 
     // Фокус должен оказаться на той позиции, которую даёт та же логика компонента
     expect(scrollSpy).toHaveBeenCalled()
-    expect(document.activeElement).toBe(cards[Math.max(Math.max(6 - columns, 0) - columns, 0)].element)
+    expect(document.activeElement).toBe(
+      cards[Math.max(Math.max(6 - columns, 0) - columns, 0)].element
+    )
   })
 
   it('Фокус двигается на 5 карточек вниз (или к последней) по ArrowDown', async () => {

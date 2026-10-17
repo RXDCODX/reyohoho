@@ -4,8 +4,6 @@ import * as backend from '@/api/movies.backend'
 import { resolvePosterSetByMovie } from '@/utils/mediaUtils'
 
 let apiInstance = null
-let isErrorSimulationEnabled = false
-const simulatedErrorCode = 500
 
 const KINOBD_BASE_URL =
   import.meta.env.VITE_KINOBD_API_URL || import.meta.env.VITE_APP_API2_URL || 'https://kinobd.net'
@@ -68,19 +66,9 @@ const getApi = () => {
   return apiInstance
 }
 
-const simulateErrorIfNeeded = async () => {
-  if (isErrorSimulationEnabled && simulatedErrorCode) {
-    const status = parseInt(simulatedErrorCode, 10)
-    const error = new Error(`Simulated error ${status}`)
-    error.response = { status }
-    throw error
-  }
-}
-
 const apiCall = async (callFn) => {
   // Guard direct imports as well as the disabled provider registry.
   if (!KINOBD_ENABLED) throw new Error('KinoBD is temporarily disabled')
-  await simulateErrorIfNeeded()
   const api = getApi()
   return await callFn(api)
 }
@@ -502,7 +490,12 @@ const getShikiInfo = async (...args) => backend.getShikiInfo(...args)
 
 const getShikiPlayers = async (...args) => backend.getShikiPlayers(...args)
 
-const getMovies = async ({ activeTime = 'all', typeFilter = 'all', limit = null, page = 1 } = {}) => {
+const getMovies = async ({
+  activeTime = 'all',
+  typeFilter = 'all',
+  limit = null,
+  page = 1
+} = {}) => {
   let endpoint = '/api/films/top'
   const params = { page }
 
@@ -570,7 +563,6 @@ const getRandomMovie = async () => {
   return { kp_id: pick?.kinopoisk_id || null, source: 'kinobd', film: buildLegacyMovie(pick) }
 }
 
-const getDons = async (...args) => backend.getDons(...args)
 const getKpIDfromSHIKI = async (...args) => backend.getKpIDfromSHIKI(...args)
 const getNudityInfoFromIMDB = async (...args) => backend.getNudityInfoFromIMDB(...args)
 const getRating = async (...args) => backend.getRating(...args)
@@ -589,7 +581,6 @@ const getAllTimingSubmissions = async (...args) => backend.getAllTimingSubmissio
 const approveTiming = async (...args) => backend.approveTiming(...args)
 const rejectTiming = async (...args) => backend.rejectTiming(...args)
 const markAsCleanText = async (...args) => backend.markAsCleanText(...args)
-const getTwitchStream = async (...args) => backend.getTwitchStream(...args)
 const voteOnTiming = async (...args) => backend.voteOnTiming(...args)
 const getTimingVote = async (...args) => backend.getTimingVote(...args)
 const getMovieNote = async (...args) => backend.getMovieNote(...args)
@@ -607,7 +598,6 @@ export {
   getShikiPlayers,
   getMovies,
   getDiscussedMovies,
-  getDons,
   getKpIDfromIMDB,
   getKpIDfromSHIKI,
   getRating,
@@ -628,14 +618,9 @@ export {
   approveTiming,
   rejectTiming,
   markAsCleanText,
-  getTwitchStream,
   voteOnTiming,
   getTimingVote,
   getMovieNote,
   saveMovieNote,
   deleteMovieNote
-}
-
-export const toggleErrorSimulation = (enabled) => {
-  isErrorSimulationEnabled = enabled
 }

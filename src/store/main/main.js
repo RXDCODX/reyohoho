@@ -21,7 +21,6 @@ export const useMainStore = defineStore(MAIN_STORE_NAME, {
     submitterUsername: '',
     cardSize: 'medium',
     isStreamerMode: true,
-    rememberScrollPosition: true,
     contentApiProvider: 'kinobox',
     searchApiProvider: 'kinobox',
     sidebarAutoHide: false,
@@ -51,7 +50,9 @@ export const useMainStore = defineStore(MAIN_STORE_NAME, {
       if (!movie?.kp_id) return
 
       // Находим индекс фильма в истории
-      const existingMovieIndex = this.history.findIndex((m) => String(m.kp_id) === String(movie.kp_id))
+      const existingMovieIndex = this.history.findIndex(
+        (m) => String(m.kp_id) === String(movie.kp_id)
+      )
 
       if (existingMovieIndex !== -1) {
         // Если фильм уже есть, обновляем время добавления и ставим первым
@@ -128,10 +129,6 @@ export const useMainStore = defineStore(MAIN_STORE_NAME, {
       this.isStreamerMode = value
     },
 
-    setRememberScrollPosition(value) {
-      this.rememberScrollPosition = value
-    },
-
     setContentApiProvider(value) {
       const normalizedProvider = String(value || '').toLowerCase()
       const aliases = {
@@ -170,7 +167,6 @@ export const useMainStore = defineStore(MAIN_STORE_NAME, {
       'submitterUsername',
       'cardSize',
       'isStreamerMode',
-      'rememberScrollPosition',
       'contentApiProvider',
       'searchApiProvider',
       'sidebarAutoHide',

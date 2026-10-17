@@ -138,7 +138,9 @@
           -->
           <label class="radio">
             <input v-model="contentApiProvider" type="radio" value="kinobox" />
-            <span class="radio-label">Kinobox (поиск, информация о фильмах и плееры, по умолчанию)</span>
+            <span class="radio-label"
+              >Kinobox (поиск, информация о фильмах и плееры, по умолчанию)</span
+            >
           </label>
           <label class="radio">
             <input v-model="contentApiProvider" type="radio" value="ddbb" />
@@ -150,8 +152,9 @@
           </label>
         </div>
         <p class="api-note">
-          Выбранный источник используется первым. Если локальный сервер не отвечает, используются резервные источники.
-          Комментарии, тайминги, рейтинги и другие функции сайта работают через выбранный сервер приложения.
+          Выбранный источник используется первым. Если локальный сервер не отвечает, используются
+          резервные источники. Комментарии, тайминги, рейтинги и другие функции сайта работают через
+          выбранный сервер приложения.
         </p>
         <h4 class="api-subtitle">Источник поиска</h4>
         <div class="radio-group">
@@ -200,11 +203,6 @@
       <div v-show="activeSettingsTab === 'behavior'" class="settings-group">
         <h3>Горячие клавиши</h3>
         <SliderRound v-model="isCtrlFEnabled">Перехватывать Ctrl+F для поиска</SliderRound>
-      </div>
-
-      <div v-show="activeSettingsTab === 'behavior'" class="settings-group">
-        <h3>Навигация</h3>
-        <SliderRound v-model="rememberScrollPosition">Запоминать позицию скролла</SliderRound>
       </div>
 
       <div v-show="activeSettingsTab === 'behavior'" class="settings-group">
@@ -426,11 +424,6 @@ const cardSize = computed({
 const isStreamerMode = computed({
   get: () => mainStore.isStreamerMode,
   set: (value) => mainStore.setStreamerMode(value)
-})
-
-const rememberScrollPosition = computed({
-  get: () => mainStore.rememberScrollPosition,
-  set: (value) => mainStore.setRememberScrollPosition(value)
 })
 
 const sidebarAutoHide = computed({

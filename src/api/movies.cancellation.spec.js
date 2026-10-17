@@ -13,19 +13,8 @@ vi.mock('@/store/main', () => ({
   })
 }))
 
-vi.mock('@/api/providerRegistry', () => ({
-  CONTENT_PROVIDERS: {
-    BACKEND: 'backend',
-    KINOBD: 'kinobd',
-    KINOBOX: 'kinobox',
-    DDBB: 'ddbb',
-    DDBB_LIVE: 'ddbb_live',
-    LOCAL: 'local'
-  },
-  DDBB_SUPPORTED_METHODS: new Set(),
-  KINOBD_SUPPORTED_METHODS: new Set(['apiSearch', 'getKpInfo']),
-  KINOBOX_SUPPORTED_METHODS: new Set(),
-  LOCAL_SUPPORTED_METHODS: new Set(),
+vi.mock('@/api/providerRegistry', async (importOriginal) => ({
+  ...(await importOriginal()),
   loadProvider: providerMocks.loadProvider
 }))
 

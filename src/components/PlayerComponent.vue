@@ -556,7 +556,6 @@ import Notification from '@/components/notification/ToastMessage.vue'
 import SliderRound from '@/components/slider/SliderRound.vue'
 import { usePlayerElectronControls } from '@/composables/usePlayerElectronControls'
 import { usePlayerLayout } from '@/composables/usePlayerLayout'
-import { usePlayerOBS } from '@/composables/usePlayerOBS'
 import { usePlayerVideoOverlay } from '@/composables/usePlayerVideoOverlay'
 import { usePlayerSharing } from '@/composables/usePlayerSharing'
 import { usePlayerSources } from '@/composables/usePlayerSources'
@@ -699,15 +698,13 @@ const {
   kpId: kp_id
 })
 
-const obs = usePlayerOBS({ isElectron, playerStore })
 const videoOverlay = usePlayerVideoOverlay({
   isElectron,
   playerStore,
   playerIframe,
   props,
   enableBlur,
-  disableBlur,
-  obs
+  disableBlur
 })
 const { videoOverlayEnabled2, toggleVideoOverlay } = videoOverlay
 
@@ -1053,7 +1050,6 @@ onMounted(() => {
   window.toggleCompressor = toggleCompressor
   window.toggleMirror = toggleMirror
 
-  obs.mount()
   videoOverlay.mount()
 })
 
@@ -1067,7 +1063,6 @@ onBeforeUnmount(() => {
   clearTimeout(hideTimeout)
   videoOverlay.dispose()
   cleanupElectronControls()
-  obs.dispose()
 })
 </script>
 
