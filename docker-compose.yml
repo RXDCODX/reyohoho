@@ -33,7 +33,7 @@ services:
 
   reyohoho:
     build: .
-    image: reyohoho:latest
+    image: ghcr.io/rxdcodx/reyohoho:latest
     container_name: reyohoho-dev
     ports:
       - "5173:5173" 
