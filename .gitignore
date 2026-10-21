@@ -32,6 +32,7 @@ _user_site_tmp/
 # Local browser/performance artifacts
 reports-browser/
 reports-lighthouse*.json
+/api-search-browser-check.html
 
 # Python
 __pycache__/
@@ -39,6 +40,14 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 backend/.env
+.dev.vars
+.dev.vars.*
+workers/**/.dev.vars
+workers/**/.dev.vars.*
+workers/**/.env
+workers/**/wrangler.local.jsonc
+.wrangler/
+workers/**/.wrangler/
 backend/*.db
 
 # Local profiling output

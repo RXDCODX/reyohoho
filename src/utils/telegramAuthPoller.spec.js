@@ -10,6 +10,21 @@ const deferred = () => {
 }
 
 describe('Telegram auth poller', () => {
+  it('backs off repeated errors while still expiring on time', async () => {
+    const checkAuth = vi.fn().mockRejectedValue(new Error('offline'))
+    const onExpired = vi.fn()
+    const poller = createTelegramAuthPoller({ checkAuth, onExpired, intervalMs: 1000 })
+    poller.start('login-token', 10)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(checkAuth).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(checkAuth).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(checkAuth).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(7000)
+    expect(onExpired).toHaveBeenCalledOnce()
+    expect(poller.isActive()).toBe(false)
+  })
   beforeEach(() => {
     vi.useFakeTimers()
   })

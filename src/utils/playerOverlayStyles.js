@@ -1,5 +1,4 @@
-const OVERLAY_FONT =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+const OVERLAY_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
 const PANEL_BACKGROUND = 'rgba(20, 20, 20, 0.8)'
 const PANEL_BACKDROP = 'blur(12px)'
 const ACCENT_COLOR = 'var(--accent-color, #6c5ce7)'
@@ -196,12 +195,6 @@ export const getDurationProgressMarkup = ({ currentTimeFormatted, totalTimeForma
   <span style="${overlayInlineStyles.monospaceMuted}">${totalTimeFormatted}</span>
 `
 
-export const getObsStatusMarkup = ({ statusColor, statusText }) => `
-  <span style="color: ${statusColor};">
-    OBS: ${statusText}
-  </span>
-`
-
 export const getSettingsModalStyle = () => `
   position: fixed !important;
   top: 0 !important;
@@ -380,11 +373,7 @@ export const getTimingChipStyle = ({ status, highlight }) => {
       ? 'rgba(255, 184, 77, 0.14)'
       : 'transparent'
 
-  const color = isActive
-    ? '#ff7a7a'
-    : isUpcoming
-      ? '#ffd184'
-      : 'rgba(255, 255, 255, 0.56)'
+  const color = isActive ? '#ff7a7a' : isUpcoming ? '#ffd184' : 'rgba(255, 255, 255, 0.56)'
 
   const textShadow = isActive
     ? '0 0 12px rgba(255, 72, 72, 0.55), 0 1px 3px rgba(0, 0, 0, 0.95)'

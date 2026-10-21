@@ -44,6 +44,18 @@ jobs:
         run: yarn build:github
         env:
           VITE_PRERENDER_MOVIE_PAGES: 'true'
+          VITE_WORKER_AUTH_ENABLED: ${{ vars.VITE_WORKER_AUTH_ENABLED || 'false' }}
+          VITE_CLOUD_HISTORY_ENABLED: ${{ vars.VITE_CLOUD_HISTORY_ENABLED || 'false' }}
+      - name: Validate the checkout used to build this artifact
+        run: |
+          yarn lint
+          yarn check:encoding
+          yarn test:unit --run
+          git rev-parse HEAD > dist/build-sha.txt
+      - name: Install browser for artifact verification
+        run: yarn playwright install --with-deps chromium
+      - name: Verify SSG and offline navigation in the final artifact
+        run: node scripts/browser-artifact-check.js dist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -64,3 +76,4 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: dist
+          cname: reyhoho.fun

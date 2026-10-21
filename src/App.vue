@@ -24,13 +24,20 @@ import MenuNavigation from '@/components/MenuNavigation.vue'
 import MobileHeader from '@/components/MobileHeader.vue'
 import { useMainStore } from '@/store/main'
 import { useNavbarStore } from '@/store/navbar'
+import { useHead } from '@unhead/vue'
 import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { isNewYearPeriod } from '@/utils/dateUtils'
 import garlandImage from '@/assets/trn-christmas-lights.webp'
 
 const store = useMainStore()
 const navbarStore = useNavbarStore()
+const route = useRoute()
 let stopSidebarPositionWatch = null
+
+// Keep a route-level title entry alive while page-specific SEO head entries mount and unmount.
+// Without this fallback, removing the home page head can restore its old title on another route.
+useHead(() => ({ title: route.meta?.title || 'ReYohoho' }))
 
 // Применяем класс sidebar-right на body при смене позиции панели
 const sidebarPosition = computed(() => store.sidebarPosition)

@@ -3,36 +3,36 @@ import { normalizeMovieListResponse } from '@/api/movieSeoNormalizer'
 import { trackAnalyticsEvent } from '@/utils/analytics'
 import { rethrowRequestCancellation } from '@/utils/requestCancellation'
 import { getSearchProviderOrder } from '@/api/searchProviderOrder'
-import {
-  getMovieInfoProviderOrder,
-  getPlayerProviderOrder
-} from '@/api/contentProviderOrder'
+import { getMovieInfoProviderOrder, getPlayerProviderOrder } from '@/api/contentProviderOrder'
 import {
   CONTENT_PROVIDERS,
-  DDBB_SUPPORTED_METHODS,
   KINOBD_SUPPORTED_METHODS,
-  KINOBOX_SUPPORTED_METHODS,
   LOCAL_SUPPORTED_METHODS,
   loadProvider
 } from '@/api/providerRegistry'
 
-const PLAYER_PROVIDER_TIMEOUT_MS = 15000
+import { KINOBD_ENABLED } from '@/api/providerAvailability'
+import { getSafePlayerUrl } from '@/utils/playerSecurity'
 
+const PLAYER_PROVIDER_TIMEOUT_MS = 15000
 const getCurrentProvider = () => {
   try {
     const mainStore = useMainStore()
-    return mainStore.contentApiProvider || CONTENT_PROVIDERS.DDBB
+    const provider = mainStore.contentApiProvider || CONTENT_PROVIDERS.KINOBOX
+    return provider === CONTENT_PROVIDERS.KINOBD && !KINOBD_ENABLED
+      ? CONTENT_PROVIDERS.KINOBOX
+      : provider
   } catch {
-    return CONTENT_PROVIDERS.DDBB
+    return CONTENT_PROVIDERS.KINOBOX
   }
 }
 
 const getCurrentSearchProvider = () => {
   try {
     const mainStore = useMainStore()
-    return mainStore.searchApiProvider || CONTENT_PROVIDERS.RHSERV
+    return mainStore.searchApiProvider || CONTENT_PROVIDERS.KINOBOX
   } catch {
-    return CONTENT_PROVIDERS.RHSERV
+    return CONTENT_PROVIDERS.KINOBOX
   }
 }
 
@@ -53,7 +53,8 @@ export const mergePlayerMaps = (playerMaps) => {
 
   for (const players of playerMaps) {
     for (const [rawKey, player] of Object.entries(players || {})) {
-      const iframe = String(player?.iframe || '').trim()
+      const iframe = getSafePlayerUrl(player?.iframe)
+      if (!iframe) continue
       if (iframe && seenIframes.has(iframe)) continue
 
       let key = rawKey
@@ -62,7 +63,7 @@ export const mergePlayerMaps = (playerMaps) => {
         key = `${rawKey} #${suffix}`
         suffix += 1
       }
-      merged[key] = player
+      merged[key] = { ...player, iframe }
       if (iframe) seenIframes.add(iframe)
     }
   }
@@ -94,23 +95,42 @@ const createProviderTimeoutError = (provider) => {
   return error
 }
 
-const withProviderTimeout = async (promise, provider) => {
+const withProviderTimeout = async (load, provider, parentSignal) => {
+  const controller = new AbortController()
   let timeoutId = null
+  let abortListener
+  let rejectAbort
+  const abortPromise = new Promise((_, reject) => {
+    rejectAbort = reject
+    abortListener = () =>
+      reject(
+        controller.signal.reason || Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' })
+      )
+    controller.signal.addEventListener('abort', abortListener, { once: true })
+  })
+  const parentAbort = () =>
+    controller.abort(
+      parentSignal.reason || Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' })
+    )
+  if (parentSignal?.aborted) parentAbort()
+  else parentSignal?.addEventListener('abort', parentAbort, { once: true })
 
   try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(createProviderTimeoutError(provider)),
-          PLAYER_PROVIDER_TIMEOUT_MS
-        )
-      })
-    ])
+    if (controller.signal.aborted) {
+      rejectAbort(controller.signal.reason)
+      return await abortPromise
+    }
+    timeoutId = setTimeout(
+      () => controller.abort(createProviderTimeoutError(provider)),
+      PLAYER_PROVIDER_TIMEOUT_MS
+    )
+    return await Promise.race([load(controller.signal), abortPromise])
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId)
     }
+    controller.signal.removeEventListener('abort', abortListener)
+    parentSignal?.removeEventListener('abort', parentAbort)
   }
 }
 
@@ -124,42 +144,47 @@ const trackPlayerProviderAttempt = (eventName, params) => {
 const getPlayersWithFallback = async (...args) => {
   const provider = getCurrentProvider()
   const startedAt = Date.now()
-  const [contentId] = args
+  const [contentId, playerOptions = {}] = args
   const order = getPlayerProviderOrder(provider)
 
-  const attempts = await Promise.all(
-    order.map(async (currentProvider) => {
-      const attemptStartedAt = Date.now()
-      try {
-        const providerApi = await loadProvider(currentProvider)
-        const players = await withProviderTimeout(providerApi.getPlayers(...args), currentProvider)
-        return {
-          currentProvider,
-          players,
-          duration: Date.now() - attemptStartedAt,
-          error: null
-        }
-      } catch (error) {
-        return {
-          currentProvider,
-          players: {},
-          duration: Date.now() - attemptStartedAt,
-          error
-        }
-      }
-    })
-  )
-
-  for (const attempt of attempts) {
-    const { currentProvider, players, duration, error } = attempt
+  for (const currentProvider of order) {
+    const attemptStartedAt = Date.now()
+    let players = {}
+    let error = null
+    try {
+      const providerApi = await loadProvider(currentProvider)
+      players = await withProviderTimeout(
+        (signal) =>
+          providerApi.getPlayers(
+            contentId,
+            {
+              ...playerOptions,
+              signal
+            },
+            ...args.slice(2)
+          ),
+        currentProvider,
+        playerOptions.signal
+      )
+      players = mergePlayerMaps([players])
+    } catch (requestError) {
+      error = requestError
+    }
+    const duration = Date.now() - attemptStartedAt
     const isTimeout = error?.name === 'PlayerProviderTimeoutError'
-    const status = error ? (isTimeout ? 'timeout' : 'error') : hasPlayers(players) ? 'success' : 'empty'
+    const status = error
+      ? isTimeout
+        ? 'timeout'
+        : 'error'
+      : hasPlayers(players)
+        ? 'success'
+        : 'empty'
     const attemptPayload = {
       status,
       kp_id: contentId,
       configured_source: provider,
       source: currentProvider,
-      fallback_used: currentProvider !== provider,
+      fallback_used: currentProvider !== order[0],
       duration_ms: Date.now() - startedAt,
       attempt_duration_ms: duration
     }
@@ -168,10 +193,12 @@ const getPlayersWithFallback = async (...args) => {
       isTimeout ? 'player_provider_timeout' : error ? 'player_provider_error' : null,
       attemptPayload
     )
+    if (error) rethrowRequestCancellation(error)
     if (error) console.warn(`[movies] getPlayers failed on ${currentProvider}`, error)
+    if (!error && hasPlayers(players)) return mergePlayerMaps([players])
   }
 
-  return mergePlayerMaps(attempts.map((attempt) => attempt.players))
+  return {}
 }
 
 const callWithProvider = async (methodName, ...args) => {
@@ -183,87 +210,33 @@ const callWithProvider = async (methodName, ...args) => {
       return await local[methodName](...args)
     } catch (error) {
       rethrowRequestCancellation(error)
-      console.warn(`[movies] ${methodName} failed on local backend, fallback to RHServ`, error)
-      const rhserv = await loadProvider(CONTENT_PROVIDERS.RHSERV)
-      return await rhserv[methodName](...args)
+      throw error
     }
   }
 
-  if (provider === CONTENT_PROVIDERS.KINOBOX && KINOBOX_SUPPORTED_METHODS.has(methodName)) {
-    try {
-      const kinobox = await loadProvider('kinobox')
-      return await kinobox[methodName](...args)
-    } catch (error) {
-      rethrowRequestCancellation(error)
-      console.warn(`[movies] ${methodName} failed on Kinobox, fallback to KinoBD/RHServ`, error)
-      if (KINOBD_SUPPORTED_METHODS.has(methodName)) {
-        try {
-          const kinobd = await loadProvider('kinobd')
-          return await kinobd[methodName](...args)
-        } catch (fallbackError) {
-          rethrowRequestCancellation(fallbackError)
-          console.warn(`[movies] ${methodName} failed on KinoBD, fallback to RHServ`, fallbackError)
-        }
-      }
-      const rhserv = await loadProvider('rhserv')
-      return await rhserv[methodName](...args)
-    }
-  }
-
-  if (provider === CONTENT_PROVIDERS.DDBB && DDBB_SUPPORTED_METHODS.has(methodName)) {
-    try {
-      const ddbb = await loadProvider('ddbb')
-      return await ddbb[methodName](...args)
-    } catch (error) {
-      rethrowRequestCancellation(error)
-      console.warn(
-        `[movies] ${methodName} failed on DDBB, fallback to Kinobox/KinoBD/RHServ`,
-        error
-      )
-      try {
-        const kinobox = await loadProvider('kinobox')
-        return await kinobox[methodName](...args)
-      } catch (fallbackError) {
-        rethrowRequestCancellation(fallbackError)
-        console.warn(
-          `[movies] ${methodName} failed on Kinobox, fallback to KinoBD/RHServ`,
-          fallbackError
-        )
-        if (KINOBD_SUPPORTED_METHODS.has(methodName)) {
-          try {
-            const kinobd = await loadProvider('kinobd')
-            return await kinobd[methodName](...args)
-          } catch (kinobdError) {
-            rethrowRequestCancellation(kinobdError)
-            console.warn(`[movies] ${methodName} failed on KinoBD, fallback to RHServ`, kinobdError)
-          }
-        }
-        const rhserv = await loadProvider('rhserv')
-        return await rhserv[methodName](...args)
-      }
-    }
-  }
-
-  if (provider === CONTENT_PROVIDERS.KINOBD && KINOBD_SUPPORTED_METHODS.has(methodName)) {
+  if (
+    KINOBD_ENABLED &&
+    provider === CONTENT_PROVIDERS.KINOBD &&
+    KINOBD_SUPPORTED_METHODS.has(methodName)
+  ) {
     try {
       const kinobd = await loadProvider('kinobd')
       return await kinobd[methodName](...args)
     } catch (error) {
       rethrowRequestCancellation(error)
-      console.warn(`[movies] ${methodName} failed on KinoBD, fallback to RHServ`, error)
-      const rhserv = await loadProvider('rhserv')
-      return await rhserv[methodName](...args)
+      throw error
     }
   }
 
-  const rhserv = await loadProvider('rhserv')
-  return await rhserv[methodName](...args)
+  const backend = await loadProvider(CONTENT_PROVIDERS.BACKEND)
+  return await backend[methodName](...args)
 }
 
 const apiSearch = async (...args) => {
   const configuredProvider = getCurrentSearchProvider()
   const order = getSearchProviderOrder(configuredProvider)
   let lastError = null
+  let successfulSearch = false
 
   for (const provider of order) {
     try {
@@ -271,6 +244,7 @@ const apiSearch = async (...args) => {
       if (typeof providerApi.apiSearch !== 'function') continue
 
       const results = await normalizeMovieListResponse(await providerApi.apiSearch(...args))
+      successfulSearch = true
       if (Array.isArray(results) && results.length > 0) {
         if (provider !== configuredProvider) {
           console.warn(`[movies] apiSearch fallback used: ${provider}`)
@@ -286,9 +260,7 @@ const apiSearch = async (...args) => {
     }
   }
 
-  if (lastError) {
-    console.warn('[movies] apiSearch fallback exhausted; returning empty results', lastError)
-  }
+  if (lastError && !successfulSearch) throw lastError
   return []
 }
 
@@ -338,7 +310,7 @@ const getKpInfo = async (...args) => getKpInfoWithFallback(...args)
 const getPlayers = async (...args) => getPlayersWithFallback(...args)
 const getShikiPlayers = async (...args) => callWithProvider('getShikiPlayers', ...args)
 const shouldEnrichListSeo = import.meta.env.SSR
-// Top lists now come from KinoBD because it exposes stable page-based pagination.
+// KinoBD code is preserved; remote top lists now use the Worker's fixed Kinopoisk query.
 const getMovies = async (...args) => {
   if (getCurrentProvider() === CONTENT_PROVIDERS.LOCAL) {
     try {
@@ -347,8 +319,17 @@ const getMovies = async (...args) => {
         { enrichMissingSeo: shouldEnrichListSeo }
       )
     } catch (error) {
-      console.warn('[movies] getMovies failed on local backend, fallback to KinoBD/RHServ', error)
+      rethrowRequestCancellation(error)
+      console.warn('[movies] getMovies failed on local backend', error)
+      // Do not silently present a rating top as local day/week popularity.
+      if (!KINOBD_ENABLED) throw error
     }
+  }
+  if (!KINOBD_ENABLED) {
+    return normalizeMovieListResponse(
+      await (await loadProvider(CONTENT_PROVIDERS.KINOBOX)).getTopMovies(...args),
+      { enrichMissingSeo: shouldEnrichListSeo }
+    )
   }
   try {
     return await normalizeMovieListResponse(
@@ -358,13 +339,9 @@ const getMovies = async (...args) => {
       }
     )
   } catch (error) {
-    console.warn('[movies] getMovies failed on KinoBD, fallback to RHServ', error)
-    return await normalizeMovieListResponse(
-      await (await loadProvider('rhserv')).getMovies(...args),
-      {
-        enrichMissingSeo: shouldEnrichListSeo
-      }
-    )
+    rethrowRequestCancellation(error)
+    console.warn('[movies] getMovies failed on KinoBD', error)
+    return []
   }
 }
 const getDiscussedMovies = async (...args) => {
@@ -375,15 +352,22 @@ const getDiscussedMovies = async (...args) => {
         { enrichMissingSeo: shouldEnrichListSeo }
       )
     } catch (error) {
-      console.warn('[movies] getDiscussedMovies failed on local backend, fallback to RHServ', error)
+      rethrowRequestCancellation(error)
+      console.warn('[movies] getDiscussedMovies failed on local backend', error)
     }
   }
-  return await normalizeMovieListResponse(
-    await (await loadProvider(CONTENT_PROVIDERS.RHSERV)).getDiscussedMovies(...args),
-    { enrichMissingSeo: shouldEnrichListSeo }
-  )
+  if (!KINOBD_ENABLED) return []
+  try {
+    return await normalizeMovieListResponse(
+      await (await loadProvider(CONTENT_PROVIDERS.KINOBD)).getDiscussedMovies(...args),
+      { enrichMissingSeo: shouldEnrichListSeo }
+    )
+  } catch (error) {
+    rethrowRequestCancellation(error)
+    console.warn('[movies] getDiscussedMovies failed on KinoBD', error)
+    return []
+  }
 }
-const getDons = async (...args) => callWithProvider('getDons', ...args)
 const getKpIDfromIMDB = async (...args) => callWithProvider('getKpIDfromIMDB', ...args)
 const getNudityInfoFromIMDB = async (...args) => callWithProvider('getNudityInfoFromIMDB', ...args)
 const getKpIDfromSHIKI = async (...args) => callWithProvider('getKpIDfromSHIKI', ...args)
@@ -398,13 +382,20 @@ const submitTiming = async (...args) => callWithProvider('submitTiming', ...args
 const updateTiming = async (...args) => callWithProvider('updateTiming', ...args)
 const deleteTiming = async (...args) => callWithProvider('deleteTiming', ...args)
 const reportTiming = async (...args) => callWithProvider('reportTiming', ...args)
-const getTopTimingSubmitters = async (...args) => callWithProvider('getTopTimingSubmitters', ...args)
-const getAllTimingSubmissions = async (...args) => callWithProvider('getAllTimingSubmissions', ...args)
-const getRandomMovie = async (...args) => callWithProvider('getRandomMovie', ...args)
+const getTopTimingSubmitters = async (...args) =>
+  callWithProvider('getTopTimingSubmitters', ...args)
+const getAllTimingSubmissions = async (...args) =>
+  callWithProvider('getAllTimingSubmissions', ...args)
+const getRandomMovie = async (...args) => {
+  const provider = getCurrentProvider()
+  if (provider === CONTENT_PROVIDERS.LOCAL || provider === CONTENT_PROVIDERS.BACKEND) {
+    return callWithProvider('getRandomMovie', ...args)
+  }
+  return (await loadProvider(CONTENT_PROVIDERS.KINOBOX)).getRandomMovie(...args)
+}
 const approveTiming = async (...args) => callWithProvider('approveTiming', ...args)
 const rejectTiming = async (...args) => callWithProvider('rejectTiming', ...args)
 const markAsCleanText = async (...args) => callWithProvider('markAsCleanText', ...args)
-const getTwitchStream = async (...args) => callWithProvider('getTwitchStream', ...args)
 const voteOnTiming = async (...args) => callWithProvider('voteOnTiming', ...args)
 const getTimingVote = async (...args) => callWithProvider('getTimingVote', ...args)
 const getMovieNote = async (...args) => callWithProvider('getMovieNote', ...args)
@@ -421,7 +412,6 @@ export {
   getShikiPlayers,
   getMovies,
   getDiscussedMovies,
-  getDons,
   getKpIDfromIMDB,
   getKpIDfromSHIKI,
   getRating,
@@ -442,37 +432,9 @@ export {
   approveTiming,
   rejectTiming,
   markAsCleanText,
-  getTwitchStream,
   voteOnTiming,
   getTimingVote,
   getMovieNote,
   saveMovieNote,
   deleteMovieNote
-}
-
-export const toggleErrorSimulation = (enabled) => {
-  return Promise.all([
-    loadProvider('rhserv'),
-    loadProvider('kinobd'),
-    loadProvider('kinobox'),
-    loadProvider('ddbb'),
-    loadProvider('ddbb_live'),
-    loadProvider('local')
-  ]).then(([rhserv, kinobd, kinobox, ddbb, ddbbLive]) => {
-    if (typeof rhserv.toggleErrorSimulation === 'function') {
-      rhserv.toggleErrorSimulation(enabled)
-    }
-    if (typeof kinobd.toggleErrorSimulation === 'function') {
-      kinobd.toggleErrorSimulation(enabled)
-    }
-    if (typeof kinobox.toggleErrorSimulation === 'function') {
-      kinobox.toggleErrorSimulation(enabled)
-    }
-    if (typeof ddbb.toggleErrorSimulation === 'function') {
-      ddbb.toggleErrorSimulation(enabled)
-    }
-    if (typeof ddbbLive.toggleErrorSimulation === 'function') {
-      ddbbLive.toggleErrorSimulation(enabled)
-    }
-  })
 }

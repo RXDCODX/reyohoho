@@ -6,7 +6,14 @@
 
     <div v-if="user" class="profile-content">
       <div class="profile-photo">
-        <img v-if="user.photo && photoURL" v-lazy="photoURL" alt="Profile Photo" />
+        <img
+          v-if="user.photo && photoURL"
+          :src="photoURL"
+          loading="lazy"
+          decoding="async"
+          alt="Profile Photo"
+          @error="setImageFallback"
+        />
         <div v-else class="photo-placeholder">
           {{ String.fromCodePoint(user.name.codePointAt(0)).toLocaleUpperCase() }}
         </div>
@@ -65,6 +72,7 @@ import { useAuthStore } from '@/store/auth'
 import { useRouter } from 'vue-router'
 import { getBaseURL } from '@/api/axios'
 import { logoutAndRedirect } from '@/utils/authSession'
+import { setImageFallback } from '@/utils/mediaUtils'
 
 export default {
   name: 'ProfilePage',
@@ -136,7 +144,8 @@ export default {
       nameInput,
       startEditName,
       saveName,
-      cancelEditName
+      cancelEditName,
+      setImageFallback
     }
   }
 }

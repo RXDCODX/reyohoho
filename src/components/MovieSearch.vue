@@ -33,7 +33,7 @@
             :class="{ 'wrong-layout': showLayoutWarning }"
             :inputmode="searchType === 'title' ? 'text' : 'numeric'"
             @keydown.enter.prevent="search"
-            @keydown.tab.prevent="handleTabKey"
+          @keydown.tab="handleTabKey"
             @keydown.down.prevent="focusFirstMovieCard"
             @input="handleInput"
           />
@@ -60,8 +60,9 @@
 
       <!-- Контейнер для истории и результатов -->
       <div class="content-container">
+        <HistoryMigrationNotice v-show="!searchTerm" />
         <!-- История просмотра -->
-        <div v-if="!searchTerm">
+        <div v-show="!searchTerm">
           <h2>
             История просмотра
             <span v-if="history.length > 0">
@@ -107,7 +108,7 @@
             </template>
           </div>
           <MovieList
-            v-else
+            v-else-if="historyActivated"
             :movies-list="history"
             :is-history="true"
             :loading="false"
@@ -121,7 +122,7 @@
         />
 
         <!-- Результаты поиска -->
-        <div v-if="searchPerformed">
+        <div v-if="searchPerformed" ref="searchResults">
           <h2>Результаты поиска</h2>
           <MovieList :movies-list="movies" :is-history="false" :loading="loading" />
           <div v-if="movies.length === 0 && !loading && !errorMessage" class="no-results">
@@ -176,10 +177,14 @@ import { useRouter } from 'vue-router'
 import { useHead } from '@unhead/vue'
 import SpinnerLoading from '@/components/SpinnerLoading.vue'
 import RandomMovieModal from '@/components/RandomMovieModal.vue'
+import HistoryMigrationNotice from '@/components/HistoryMigrationNotice.vue'
 import { getMovieSeoPath } from '@/utils/movieSeo'
 import { debugLog } from '@/utils/logger'
 import { createLatestRequestGuard } from '@/utils/latestRequest'
+import { normalizeRandomMovie } from '@/utils/randomMovie'
+import { isRequestCanceled } from '@/utils/requestCancellation'
 import { logoutAndRedirect } from '@/utils/authSession'
+import { usePublicPageState } from '@/composables/usePublicPageState'
 
 const mainStore = useMainStore()
 const authStore = useAuthStore()
@@ -196,16 +201,26 @@ const errorMessage = ref('')
 const errorCode = ref(null)
 const isMobile = computed(() => mainStore.isMobile)
 const history = ref([])
+// Personal history is client data. Mount its cards only after the first display.
+const historyActivated = ref(false)
 const deletedHistoryIds = ref(new Set())
 const topMovies = ref([])
 const topMoviesLoading = ref(false)
 const topMoviesLoadingMore = ref(false)
 const topMoviesPage = ref(1)
 const topMoviesHasMore = ref(true)
+const publicPage = usePublicPageState('home')
+const initialPage = publicPage.read()
+if (initialPage && mainStore.contentApiProvider !== 'local') {
+  topMovies.value = initialPage.movies
+  topMoviesPage.value = initialPage.page
+  topMoviesHasMore.value = initialPage.hasMore
+}
 const homeTopSentinel = ref(null)
 const HOME_TOP_PAGE_SIZE = 24
 let homeTopObserver = null
 const searchRequestGuard = createLatestRequestGuard()
+const randomRequestGuard = createLatestRequestGuard()
 
 const dedupeMoviesByKpId = (items = []) => {
   const seen = new Set()
@@ -230,8 +245,9 @@ const randomLoading = ref(false)
 const randomError = ref('')
 
 const searchInput = ref(null)
-const siteOrigin = import.meta.env.VITE_SITE_ORIGIN || 'https://dav2010id.github.io'
-const basePath = normalizeBasePath(import.meta.env.VITE_BASE_URL || '/reyohoho')
+const searchResults = ref(null)
+const siteOrigin = import.meta.env.VITE_SITE_ORIGIN || 'https://reyhoho.fun'
+const basePath = normalizeBasePath(import.meta.env.VITE_BASE_URL || '/')
 const canonicalUrl = `${siteOrigin}${basePath || ''}/`
 const homeTitle = 'ReYohoho - поиск фильмов и сериалов онлайн бесплатно'
 const homeDescription =
@@ -372,7 +388,10 @@ const setupHomeTopInfiniteScroll = async () => {
   homeTopObserver.observe(homeTopSentinel.value)
 }
 
-onServerPrefetch(loadHomeTopMovies)
+onServerPrefetch(async () => {
+  await loadHomeTopMovies()
+  publicPage.save({ movies: topMovies.value, page: topMoviesPage.value, hasMore: topMoviesHasMore.value })
+})
 
 watch(canLoadMoreTopMovies, (canLoad) => {
   if (canLoad) {
@@ -449,8 +468,9 @@ const handleInput = (event) => {
   }
 }
 
-const handleTabKey = () => {
-  if (showLayoutWarning.value) {
+const handleTabKey = (event) => {
+  if (showLayoutWarning.value && !event.shiftKey) {
+    event.preventDefault()
     searchTerm.value = convertLayout(searchTerm.value)
     showLayoutWarning.value = false
   }
@@ -650,10 +670,12 @@ onMounted(() => {
     searchTerm.value = shikiId
     performSearch()
   }
+  if (!searchTerm.value) historyActivated.value = true
   searchInput.value?.focus()
 })
 
 onUnmounted(() => {
+  randomRequestGuard.invalidate()
   debouncedPerformSearch.cancel()
   searchRequestGuard.invalidate()
   disconnectHomeTopInfiniteScroll()
@@ -661,6 +683,7 @@ onUnmounted(() => {
 
 // Автопоиск с задержкой (только для поиска по названию)
 watch(searchTerm, () => {
+  if (!searchTerm.value) historyActivated.value = true
   if (searchType.value !== 'title') {
     return
   }
@@ -669,7 +692,7 @@ watch(searchTerm, () => {
 
 const focusFirstMovieCard = () => {
   if (movies.value.length > 0) {
-    const firstMovieCard = document.querySelector('.movie-card')
+    const firstMovieCard = searchResults.value?.querySelector('.movie-card')
     if (firstMovieCard) {
       firstMovieCard.focus()
     }
@@ -682,45 +705,39 @@ const openRandomMovie = () => {
 }
 
 const closeRandomModal = () => {
+  randomRequestGuard.invalidate()
+  randomLoading.value = false
   showRandomModal.value = false
   randomMovie.value = null
   randomError.value = ''
 }
 
 const fetchRandomMovie = async () => {
+  const requestId = randomRequestGuard.begin()
+  const signal = randomRequestGuard.getSignal(requestId)
   randomLoading.value = true
   randomError.value = ''
+  randomMovie.value = null
 
   try {
-    const response = await getRandomMovie()
+    const response = await getRandomMovie({ signal })
+    if (!randomRequestGuard.isLatest(requestId)) return
+    if (!response?.kp_id) throw new Error('Random movie has no identifier')
 
-    if (response.kp_id) {
-      try {
-        const kpInfo = await getKpInfo(response.kp_id)
-        randomMovie.value = {
-          ...response,
-          description: kpInfo.description,
-          budget: kpInfo.budget,
-          fees_world: kpInfo.fees_world,
-          fees_russia: kpInfo.fees_russia,
-          premiere_ru: kpInfo.premiere_ru,
-          premiere_world: kpInfo.premiere_world,
-          age_rating: kpInfo.age_rating,
-          duration: kpInfo.duration,
-          total_rating: kpInfo.total_rating
-        }
-      } catch {
-        randomMovie.value = response
-      }
-    } else {
-      randomMovie.value = response
+    try {
+      const kpInfo = await getKpInfo(response.kp_id, { signal, timeout: 15000 })
+      if (!randomRequestGuard.isLatest(requestId)) return
+      randomMovie.value = normalizeRandomMovie(response, kpInfo || {})
+    } catch (error) {
+      if (isRequestCanceled(error) || !randomRequestGuard.isLatest(requestId)) return
+      randomMovie.value = normalizeRandomMovie(response)
     }
   } catch (error) {
-    const { message } = handleApiError(error)
-    randomError.value = message
+    if (isRequestCanceled(error) || !randomRequestGuard.isLatest(requestId)) return
+    randomError.value = 'Не удалось подобрать фильм. Попробуйте ещё раз чуть позже.'
     console.error('Ошибка при получении случайного фильма:', error)
   } finally {
-    randomLoading.value = false
+    if (randomRequestGuard.isLatest(requestId)) randomLoading.value = false
   }
 }
 </script>

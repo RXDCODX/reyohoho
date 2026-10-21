@@ -9,7 +9,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { sanitizeToastHtml } from '@/utils/htmlSanitizer'
 
 const visible = ref(false)
@@ -48,6 +48,8 @@ const handleClick = (event) => {
     onClick.value()
   }
 }
+
+onBeforeUnmount(hideNotification)
 
 // Экспортируем функцию для вызова уведомления
 defineExpose({ showNotification })

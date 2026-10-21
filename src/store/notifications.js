@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia'
+import { useAuthStore } from '@/store/auth'
+import { accountCapabilities } from '@/api/accountCapabilities'
 import {
   getNotifications,
   getUnreadNotificationsCount,
@@ -17,25 +19,38 @@ export const useNotificationsStore = defineStore('notifications', {
 
   actions: {
     async fetchNotifications() {
+      const token = useAuthStore().token
+      if (!accountCapabilities(useAuthStore()).notifications) {
+        this.reset()
+        return
+      }
       this.loading = true
       this.error = null
 
       try {
         const data = await getNotifications()
+        if (useAuthStore().token !== token) return
         this.notifications = data.notifications || []
         this.unreadCount = data.unread_count || 0
         this.lastFetchTime = Date.now()
       } catch (error) {
+        if (useAuthStore().token !== token) return
         this.error = error.response?.data?.error || 'Ошибка загрузки уведомлений'
         console.error('Error fetching notifications:', error)
       } finally {
-        this.loading = false
+        if (useAuthStore().token === token) this.loading = false
       }
     },
 
     async fetchUnreadCount() {
+      const token = useAuthStore().token
+      if (!accountCapabilities(useAuthStore()).notifications) {
+        this.reset()
+        return
+      }
       try {
         const data = await getUnreadNotificationsCount()
+        if (useAuthStore().token !== token) return
         this.unreadCount = data.unread_count || 0
       } catch (error) {
         console.error('Error fetching unread count:', error)
@@ -43,8 +58,10 @@ export const useNotificationsStore = defineStore('notifications', {
     },
 
     async markAsRead(notificationIds = null) {
+      const token = useAuthStore().token
       try {
         await markNotificationsAsRead(notificationIds)
+        if (useAuthStore().token !== token) return
 
         if (notificationIds) {
           this.notifications.forEach((notification) => {
@@ -62,6 +79,7 @@ export const useNotificationsStore = defineStore('notifications', {
           this.unreadCount = 0
         }
       } catch (error) {
+        if (useAuthStore().token !== token) throw error
         this.error = error.response?.data?.error || 'Ошибка при отметке уведомлений'
         console.error('Error marking notifications as read:', error)
         throw error
@@ -69,8 +87,10 @@ export const useNotificationsStore = defineStore('notifications', {
     },
 
     async deleteNotification(notificationId) {
+      const token = useAuthStore().token
       try {
         await deleteNotification(notificationId)
+        if (useAuthStore().token !== token) return
 
         const notification = this.notifications.find((n) => n.id === notificationId)
         if (notification && !notification.is_read) {
@@ -79,6 +99,7 @@ export const useNotificationsStore = defineStore('notifications', {
 
         this.notifications = this.notifications.filter((n) => n.id !== notificationId)
       } catch (error) {
+        if (useAuthStore().token !== token) throw error
         this.error = error.response?.data?.error || 'Ошибка удаления уведомления'
         console.error('Error deleting notification:', error)
         throw error

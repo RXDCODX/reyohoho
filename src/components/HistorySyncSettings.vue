@@ -1,0 +1,292 @@
+<template>
+  <section class="history-sync">
+    <h4 v-if="!compact">Облачная история и перенос</h4>
+    <p v-if="!compact">
+      Без входа история сохраняется только в этом браузере. Её можно перенести со старого сайта или
+      сохранить в файл.
+    </p>
+    <p v-if="!compact && cloudHistoryAvailable">
+      {{
+        enabled
+          ? 'История синхронизируется с облаком и доступна на других устройствах после входа в ваш аккаунт.'
+          : 'Для синхронизации войдите через Telegram и включите облачную историю.'
+      }}
+    </p>
+    <p v-else-if="!compact">
+      Облачная синхронизация пока недоступна. Вы можете сохранить историю в файл или перенести её со
+      старого сайта.
+    </p>
+    <p v-if="!compact && enabled">
+      Фильмы, удалённые из облачной истории, не появятся снова при повторном импорте.
+    </p>
+    <div class="history-actions">
+      <router-link v-if="hasPendingSync" to="/auth-success"
+        >Продолжить незавершённую синхронизацию</router-link
+      >
+      <button
+        v-if="!compact && cloudHistoryAvailable && auth.isAuthenticated && !enabled"
+        :disabled="busy"
+        @click="enable"
+      >
+        Включить синхронизацию истории
+      </button>
+      <button v-if="!compact && enabled" :disabled="busy" @click="refresh">
+        Загрузить из облака
+      </button>
+      <button v-if="!compact && enabled" :disabled="busy" @click="uploadLocal">
+        Добавить локальную историю в облако
+      </button>
+      <button
+        v-if="!compact && enabled && !auth.isWorkerSession"
+        :disabled="busy"
+        @click="main.cloudHistoryAccount = null"
+      >
+        Отключить синхронизацию
+      </button>
+      <button v-if="!compact && enabled" :disabled="busy" @click="clearCloud">
+        Удалить облачную историю
+      </button>
+      <button :disabled="busy" @click="transfer">Перенести со старого сайта</button>
+      <button v-if="!compact && guestBackup.length" :disabled="busy" @click="pending = guestBackup">
+        Восстановить историю до входа в аккаунт
+      </button>
+      <button v-if="!compact" @click="download">Сохранить историю в файл</button>
+      <label
+        >Загрузить историю из файла
+        <input type="file" accept=".json,application/json" :disabled="busy" @change="readFile"
+      /></label>
+    </div>
+    <div v-if="pending !== null">
+      <p>
+        Найдено {{ pending.length }} фильмов. Импорт добавит их к текущей истории, не удаляя её.
+      </p>
+      <p v-if="auth.isAuthenticated">История также будет сохранена в вашем аккаунте.</p>
+      <button :disabled="busy" @click="acceptImport">Подтвердить импорт</button>
+      <button :disabled="busy" @click="pending = null">Отмена</button>
+    </div>
+    <p role="status">{{ message }}</p>
+    <p>
+      Переносите историю в том же браузере и профиле, где пользовались старым сайтом. Если
+      всплывающее окно заблокировано, разрешите его или
+      <a :href="TRANSFER_URL" target="_blank" rel="noopener noreferrer"
+        >откройте страницу переноса</a
+      >, скачайте файл истории и выберите «Загрузить историю из файла».
+    </p>
+  </section>
+</template>
+
+<script setup>
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useAuthStore } from '@/store/auth'
+import { useMainStore } from '@/store/main'
+import {
+  cloudHistoryAvailable,
+  getCloudHistory,
+  historyRequest,
+  importCloudHistory,
+  isCloudHistoryEnabled
+} from '@/api/cloudHistory'
+import { startHistoryTransfer, TRANSFER_URL } from '@/utils/historyTransfer'
+import { addToList, getMyLists } from '@/api/user'
+import { USER_LIST_TYPES_ENUM } from '@/constants'
+import { mergeHistory, normalizeHistory } from '../../migration/history-transfer/history-data.js'
+import { readPendingSync } from '@/utils/pendingAccountSync'
+
+defineProps({ compact: { type: Boolean, default: false } })
+const emit = defineEmits(['imported'])
+const auth = useAuthStore()
+const main = useMainStore()
+const enabled = computed(isCloudHistoryEnabled)
+const busy = ref(false)
+const pending = ref(null)
+const message = ref('')
+const guestBackup = ref([])
+const hasPendingSync = computed(() => {
+  if (!auth.isAuthenticated) return false
+  try {
+    const data = readPendingSync(`${auth.isWorkerSession ? 'worker' : 'legacy'}:${auth.user.id}`)
+    return (
+      !!data && (data.history.length || Object.values(data.lists).some((items) => items.length))
+    )
+  } catch {
+    return true
+  }
+})
+onMounted(() => {
+  try {
+    const backup = JSON.parse(localStorage.getItem('reyohoho-guest-history-backup') || '[]')
+    guestBackup.value = normalizeHistory(backup, 5000)
+  } catch {
+    guestBackup.value = []
+  }
+})
+let cancelTransfer = () => {}
+onBeforeUnmount(() => cancelTransfer())
+
+async function run(action) {
+  if (busy.value) return
+  busy.value = true
+  message.value = ''
+  try {
+    await action()
+    message.value = 'Готово'
+  } catch (error) {
+    message.value = error.message
+  } finally {
+    busy.value = false
+  }
+}
+function enable() {
+  if (!window.confirm('Синхронизировать локальную историю этого браузера с облаком?')) return
+  run(async () => {
+    const token = auth.token
+    const history = await importCloudHistory(main.history.slice(0, 5000))
+    if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
+    main.cloudHistoryAccount = String(auth.user.id)
+    main.setHistory(history)
+  })
+}
+function refresh() {
+  run(async () => {
+    const token = auth.token
+    const history = await getCloudHistory()
+    if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
+    main.setHistory(history)
+  })
+}
+function uploadLocal() {
+  if (
+    !window.confirm('Добавить локальные записи в облако? Ранее удалённые записи не восстановятся.')
+  )
+    return
+  run(async () => {
+    const token = auth.token
+    const history = await importCloudHistory(main.history.slice(0, 5000))
+    if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
+    main.setHistory(history)
+  })
+}
+function clearCloud() {
+  if (
+    !window.confirm(
+      'Удалить историю в облаке для этого аккаунта? Это действие очистит и локальную историю.'
+    )
+  )
+    return
+  run(async () => {
+    const token = auth.token
+    await historyRequest('', 'DELETE')
+    if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите операцию')
+    main.clearAllHistory()
+  })
+}
+function transfer() {
+  cancelTransfer()
+  cancelTransfer = startHistoryTransfer(
+    (history) => {
+      pending.value = history
+    },
+    (error) => {
+      message.value = error
+    }
+  )
+}
+async function readFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    if (file.size > 4000000) throw new Error('Файл слишком большой (максимум 4 МБ)')
+    let data
+    try {
+      data = JSON.parse(await file.text())
+    } catch {
+      throw new Error(
+        'Не удалось прочитать файл истории. Выберите файл, сохранённый на странице переноса или в настройках сайта.'
+      )
+    }
+    pending.value = normalizeHistory(Array.isArray(data) ? data : data.history, 5000)
+  } catch (error) {
+    message.value = error.message
+  }
+}
+function acceptImport() {
+  run(async () => {
+    const token = auth.token
+    let history
+    if (enabled.value) {
+      history = await importCloudHistory(pending.value)
+    } else if (auth.isAuthenticated) {
+      const serverHistory = await getMyLists(USER_LIST_TYPES_ENUM.HISTORY, { fresh: true })
+      const existing = new Set(serverHistory.map((item) => String(item.kp_id)))
+      for (const item of pending.value) {
+        if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
+        if (!existing.has(item.kp_id))
+          await addToList(item.kp_id, USER_LIST_TYPES_ENUM.HISTORY, item)
+      }
+      history = await getMyLists(USER_LIST_TYPES_ENUM.HISTORY)
+      if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
+    } else {
+      history = mergeHistory(main.history, pending.value)
+    }
+    if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите импорт')
+    main.setHistory(history)
+    pending.value = null
+    emit('imported')
+  })
+}
+function download() {
+  run(async () => {
+    const token = auth.token
+    const history = auth.isAuthenticated
+      ? await getMyLists(USER_LIST_TYPES_ENUM.HISTORY, { fresh: true, awaitMetadata: true })
+      : main.history
+    if (auth.token !== token) throw new Error('Аккаунт изменился. Повторите экспорт')
+    const url = URL.createObjectURL(
+      new window.Blob([JSON.stringify({ version: 1, history: normalizeHistory(history, 5000) })], {
+        type: 'application/json'
+      })
+    )
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'reyohoho-history.json'
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  })
+}
+</script>
+
+<style scoped>
+.history-sync {
+  margin-top: 24px;
+  text-align: left;
+}
+.history-sync p {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+button,
+label {
+  padding: 10px 14px;
+  border: 1px solid var(--accent-color);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+input {
+  display: block;
+  max-width: 100%;
+  margin-top: 8px;
+}
+</style>

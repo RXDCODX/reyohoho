@@ -11,11 +11,16 @@ import {
   PLAYER_STORE_NAME
 } from '../constants'
 import { usePlayerStore } from '../player'
-import { CONTENT_PROVIDER_DDBB_DEFAULT_MIGRATION_KEY } from '../utils'
+import {
+  CONTENT_PROVIDER_DDBB_DEFAULT_MIGRATION_KEY,
+  CONTENT_PROVIDER_KINOBOX_DEFAULT_MIGRATION_KEY
+} from '../utils'
 import { useMainStore } from './main'
 
 const pickMainPersistedState = (state) => ({
   history: state.history,
+  historyOwner: state.historyOwner,
+  cloudHistoryAccount: state.cloudHistoryAccount,
   isHistoryAllowed: state.isHistoryAllowed,
   isCommentsEnabled: state.isCommentsEnabled,
   isAutoShowComments: state.isAutoShowComments,
@@ -24,7 +29,6 @@ const pickMainPersistedState = (state) => ({
   submitterUsername: state.submitterUsername,
   cardSize: state.cardSize,
   isStreamerMode: state.isStreamerMode,
-  rememberScrollPosition: state.rememberScrollPosition,
   contentApiProvider: state.contentApiProvider,
   searchApiProvider: state.searchApiProvider,
   sidebarAutoHide: state.sidebarAutoHide,
@@ -94,14 +98,16 @@ describe('Базовы persist тесты для main', () => {
     )
   })
 
-  it('Один раз переводит старый Kinobox provider на DDBB', () => {
+  it('Сохраняет Kinobox вместо старой миграции на DDBB', () => {
     window.localStorage.setItem(MAIN_STORE_NAME, JSON.stringify({ contentApiProvider: 'kinobox' }))
 
     const store = useMainStore()
 
-    expect(store.contentApiProvider).toBe('ddbb')
+    expect(store.contentApiProvider).toBe('kinobox')
     expect(window.localStorage.getItem(CONTENT_PROVIDER_DDBB_DEFAULT_MIGRATION_KEY)).toBe('done')
-    expect(JSON.parse(window.localStorage.getItem(MAIN_STORE_NAME)).contentApiProvider).toBe('ddbb')
+    expect(JSON.parse(window.localStorage.getItem(MAIN_STORE_NAME)).contentApiProvider).toBe(
+      'kinobox'
+    )
   })
 
   it('Не перезаписывает Kinobox после выполненной миграции', () => {
@@ -111,6 +117,33 @@ describe('Базовы persist тесты для main', () => {
     const store = useMainStore()
 
     expect(store.contentApiProvider).toBe('kinobox')
+  })
+
+  it('Переводит сохранённый KinoBD на Kinobox даже после старой миграции', () => {
+    window.localStorage.setItem(CONTENT_PROVIDER_DDBB_DEFAULT_MIGRATION_KEY, 'done')
+    window.localStorage.setItem(
+      MAIN_STORE_NAME,
+      JSON.stringify({
+        contentApiProvider: 'kinobd',
+        searchApiProvider: 'kinobd'
+      })
+    )
+    const store = useMainStore()
+    expect(store.contentApiProvider).toBe('kinobox')
+    expect(store.searchApiProvider).toBe('kinobox')
+  })
+
+  it('Один раз меняет старый дефолт DDBB на Kinobox', () => {
+    window.localStorage.setItem(CONTENT_PROVIDER_DDBB_DEFAULT_MIGRATION_KEY, 'done')
+    window.localStorage.setItem(MAIN_STORE_NAME, JSON.stringify({ contentApiProvider: 'ddbb' }))
+    expect(useMainStore().contentApiProvider).toBe('kinobox')
+    expect(window.localStorage.getItem(CONTENT_PROVIDER_KINOBOX_DEFAULT_MIGRATION_KEY)).toBe('done')
+  })
+
+  it('Сохраняет явный выбор DDBB после новой миграции', () => {
+    window.localStorage.setItem(CONTENT_PROVIDER_KINOBOX_DEFAULT_MIGRATION_KEY, 'done')
+    window.localStorage.setItem(MAIN_STORE_NAME, JSON.stringify({ contentApiProvider: 'ddbb' }))
+    expect(useMainStore().contentApiProvider).toBe('ddbb')
   })
 })
 
@@ -227,16 +260,6 @@ describe('Тесты миграций на новый способ хранен�
         highlightTimings: true,
         autoBlurTimings: true,
         fontSize: 18
-      },
-      obsSettings: {
-        enabled: false,
-        host: 'localhost',
-        port: 4455,
-        password: '',
-        connected: false,
-        filtersFound: [],
-        selectedFilterId: null,
-        showObsInOverlay: true
       }
     },
     isHistoryAllowed: true
@@ -335,6 +358,8 @@ describe('Тесты миграций на новый способ хранен�
       },
       main: {
         history: [],
+        historyOwner: 'guest',
+        cloudHistoryAccount: null,
         isHistoryAllowed: true,
         isCommentsEnabled: true,
         isAutoShowComments: false,
@@ -343,9 +368,8 @@ describe('Тесты миграций на новый способ хранен�
         submitterUsername: '',
         cardSize: 'medium',
         isStreamerMode: true,
-        rememberScrollPosition: true,
-        contentApiProvider: 'ddbb',
-        searchApiProvider: 'rhserv',
+        contentApiProvider: 'kinobox',
+        searchApiProvider: 'kinobox',
         sidebarAutoHide: false,
         sidebarPosition: 'left'
       }

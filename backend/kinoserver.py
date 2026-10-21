@@ -22,6 +22,7 @@ from sanic.response import html, json, text
 try:
     from .backend import GraphQLError as BackendGraphQLError
     from .backend import fetch_film_async as fetch_graphql_film
+    from .backend import operation_document
     from .errors import APIError, error_payload
     from .routes_external import cached_mapping, enrich_movie, local_top, store_mapping
     from .services.shikimori import (
@@ -30,10 +31,11 @@ try:
         kinopoisk_id_from_anime,
         normalize_anime as normalize_shikimori_anime,
     )
-except ImportError:  # Direct execution: python graphql_extracted/kinoserver.py
+except ImportError:  # Direct execution: python backend/kinoserver.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from backend.backend import GraphQLError as BackendGraphQLError
     from backend.backend import fetch_film_async as fetch_graphql_film
+    from backend.backend import operation_document
     from backend.errors import APIError, error_payload
     from backend.routes_external import cached_mapping, enrich_movie, local_top, store_mapping
     from backend.services.shikimori import (
@@ -45,7 +47,6 @@ except ImportError:  # Direct execution: python graphql_extracted/kinoserver.py
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-KINOPOISK_API_BASE = "https://kinopoiskapiunofficial.tech"
 KINOPOISK_GRAPHQL_URL = "https://graphql.kinopoisk.ru/graphql"
 KODIK_API_BASE = "https://kodikapi.com"
 WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
@@ -182,7 +183,6 @@ class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
     debug: bool = os.getenv("DEBUG", "0") == "1"
-    kinopoisk_token: str = os.getenv("KINOPOISK_TECH_API_TOKEN", "")
     kodik_token: str = os.getenv("KODIK_TOKEN", "")
     bazon_token: str = os.getenv("BAZON_TOKEN", "")
     collaps_token: str = os.getenv("COLLAPS_TOKEN", "")
@@ -200,7 +200,6 @@ class Settings:
     )
     tmdb_token: str = os.getenv("TMDB_TOKEN", "")
     youtube_token: str = os.getenv("YOUTUBE_TOKEN", "")
-    kinopoisk_provider: str = os.getenv("KINOPOISK_PROVIDER", "auto").strip().lower()
     allowed_origins: tuple[str, ...] = tuple(
         origin.strip()
         for origin in os.getenv(
@@ -424,8 +423,7 @@ def register_routes(app: Sanic) -> None:
                 "ok": True,
                 "movie_adapter": "backend.py",
                 "providers": {
-                    "kinopoisk": bool(settings.kinopoisk_token),
-                    "kinopoisk_graphql": True,
+                    "kinopoisk_graphql": "configured",
                     "kodik": bool(settings.kodik_token),
                     "bazon": bool(settings.bazon_token),
                     "collaps": bool(settings.collaps_token),
@@ -527,8 +525,9 @@ def register_routes(app: Sanic) -> None:
         return json(items)
 
     @app.get("/chance")
-    async def random_movie(_: Request):
-        movie = await get_random_movie(app)
+    async def random_movie(request: Request):
+        local_movies = await local_top(request, "all", "all", 1, 50)
+        movie = random.choice(local_movies) if local_movies else await get_random_movie(app)
         return json(movie)
 
     @app.get("/get_dons")
@@ -602,14 +601,6 @@ def map_kinopoisk_type(value: Any) -> str:
     return "FILM"
 
 
-def use_kinopoisk_graphql(settings: Settings) -> bool:
-    if settings.kinopoisk_provider == "graphql":
-        return True
-    if settings.kinopoisk_provider == "tech":
-        return False
-    return not bool(settings.kinopoisk_token)
-
-
 def kp_graphql_headers(referer: str = "https://www.kinopoisk.ru/") -> dict[str, str]:
     return {
         "accept": "application/json",
@@ -646,32 +637,6 @@ def first_present(*values: Any) -> Any:
         if value not in (None, "", [], {}):
             return value
     return None
-
-
-def gql_query_path(*parts: str) -> Path:
-    return Path(__file__).resolve().parent.joinpath(*parts)
-
-
-def load_gql_query(name: str) -> str:
-    candidates = [
-        gql_query_path("kp_graphql_queries", f"{name}.gql"),
-        gql_query_path(".jellyfin-kp-white_tmp", "KinopoiskWhite", "Api", "Queries", f"{name}.gql"),
-    ]
-    for path in candidates:
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    raise RuntimeError(f"GraphQL query template is missing: {name}.gql")
-
-
-def load_kinopapi_body(*parts: str) -> dict[str, Any]:
-    candidates = [
-        gql_query_path("kp_graphql_queries", "kinopapi", *parts),
-        gql_query_path(".kinopapi_tmp", "kinopapi", "templates", "bodies", *parts),
-    ]
-    for path in candidates:
-        if path.is_file():
-            return jsonlib.loads(path.read_text(encoding="utf-8"))
-    raise RuntimeError(f"GraphQL JSON body template is missing: {'/'.join(parts)}")
 
 
 def normalize_top_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -837,8 +802,9 @@ def gql_staff_items(items: list[dict[str, Any]], profession_key: str, profession
 def normalize_gql_movie_card(movie: dict[str, Any], relation_type: str = "SIMILAR") -> dict[str, Any]:
     title = movie.get("title") or {}
     film_id = movie.get("id")
-    poster_url = f"https://kinopoiskapiunofficial.tech/images/posters/kp/{film_id}.jpg" if film_id else ""
-    poster_preview = f"https://kinopoiskapiunofficial.tech/images/posters/kp_small/{film_id}.jpg" if film_id else ""
+    poster = movie.get("poster") or ((movie.get("gallery") or {}).get("posters") or {}).get("vertical") or {}
+    poster_url = kp_image_url(poster.get("avatarsUrl"), "576x")
+    poster_preview = kp_image_url(poster.get("avatarsUrl"), "300x")
     return {
         "film_id": film_id,
         "name_ru": title.get("russian") or "",
@@ -858,7 +824,8 @@ def normalize_gql_search_movie(movie: dict[str, Any]) -> dict[str, Any]:
     )
     title_base = title_data.get("russian") or title_data.get("original") or ""
     title = f"{title_base} ({year})" if title_base and year else title_base
-    poster = movie.get("poster") or {}
+    posters = ((movie.get("gallery") or {}).get("posters") or {})
+    poster = movie.get("poster") or posters.get("hdVertical") or posters.get("kpVertical") or posters.get("vertical") or {}
     raw = {
         "filmId": movie.get("id"),
         "kinopoiskId": movie.get("id"),
@@ -918,10 +885,8 @@ def normalize_gql_film_payload(
         movie = item.get("movie") or {}
         sequels.append(normalize_gql_movie_card(movie, item.get("relationType") or "RELATED"))
 
-    rh_poster_url = f"https://kinopoiskapiunofficial.tech/images/posters/kp/{kp_id}.jpg" if kp_id else kp_image_url(poster_url, "576x")
-    rh_poster_preview = kp_image_url(poster_url, "300x450") or (
-        f"https://kinopoiskapiunofficial.tech/images/posters/kp_small/{kp_id}.jpg" if kp_id else ""
-    )
+    rh_poster_url = kp_image_url(poster_url, "576x")
+    rh_poster_preview = kp_image_url(poster_url, "300x450")
 
     return {
         "kinopoisk_id": int(kp_id) if kp_id else None,
@@ -1149,18 +1114,7 @@ async def kinopoisk_search(app: Sanic, term: str) -> list[dict[str, Any]]:
     cache_key = f"search:{term.lower()}"
 
     async def factory() -> list[dict[str, Any]]:
-        if use_kinopoisk_graphql(app.ctx.settings):
-            return await kinopoisk_graphql_search(app, term)
-
-        ensure_provider_token(app.ctx.settings.kinopoisk_token, "Kinopoisk token is missing")
-        payload = await fetch_json(
-            app,
-            f"{KINOPOISK_API_BASE}/api/v2.1/films/search-by-keyword",
-            headers={"X-API-KEY": app.ctx.settings.kinopoisk_token},
-            params={"keyword": term},
-        )
-        films = payload.get("films") or []
-        return [normalize_search_item(item) for item in films if item.get("filmId")]
+        return await kinopoisk_graphql_search(app, term)
 
     return await app.ctx.cache.get_or_set(cache_key, SEARCH_CACHE_TTL_SECONDS, factory)
 
@@ -1172,16 +1126,7 @@ async def kinopoisk_film(app: Sanic, kp_id: str) -> dict[str, Any]:
     cache_key = f"film:{kp_id}"
 
     async def factory() -> dict[str, Any]:
-        if use_kinopoisk_graphql(app.ctx.settings):
-            return await kinopoisk_graphql_film(app, kp_id)
-
-        ensure_provider_token(app.ctx.settings.kinopoisk_token, "Kinopoisk token is missing")
-        payload = await fetch_json(
-            app,
-            f"{KINOPOISK_API_BASE}/api/v2.2/films/{kp_id}",
-            headers={"X-API-KEY": app.ctx.settings.kinopoisk_token},
-        )
-        return normalize_film_payload(payload)
+        return await kinopoisk_graphql_film(app, kp_id)
 
     return await app.ctx.cache.get_or_set(
         cache_key, MOVIE_CACHE_TTL_SECONDS, factory, stale_seconds=MOVIE_CACHE_STALE_SECONDS
@@ -1189,9 +1134,12 @@ async def kinopoisk_film(app: Sanic, kp_id: str) -> dict[str, Any]:
 
 
 async def kinopoisk_graphql_search(app: Sanic, term: str) -> list[dict[str, Any]]:
-    body = load_kinopapi_body("search", "SuggestSearch.json")
-    body["variables"].update({"keyword": term, "yandexCityId": 0, "limit": 10})
-    data = await kinopoisk_graphql_from_body(app, body)
+    data = await kinopoisk_graphql(
+        app,
+        "SuggestSearch",
+        operation_document("SuggestSearch"),
+        {"keyword": term, "yandexCityId": 0, "limit": 10},
+    )
     top = (((data.get("data") or {}).get("suggest") or {}).get("top") or {})
     results: list[dict[str, Any]] = []
 
@@ -1260,11 +1208,11 @@ async def get_imdb_id_by_kp(app: Sanic, kp_id: str) -> str | None:
 
 async def kinopoisk_graphql_similars(app: Sanic, kp_id: str) -> list[dict[str, Any]]:
     try:
-        body = load_kinopapi_body("film", "FilmSimilarMovies.json")
-        body["variables"].update({"filmId": int(kp_id), "similarMoviesLimit": 10, "withUserData": False})
-        data = await kinopoisk_graphql_from_body(
+        data = await kinopoisk_graphql(
             app,
-            body,
+            "FilmSimilarMovies",
+            operation_document("FilmSimilarMovies"),
+            {"filmId": int(kp_id), "similarMoviesLimit": 10, "withUserData": False},
             referer=f"https://www.kinopoisk.ru/film/{kp_id}/",
         )
         items = (
@@ -1279,11 +1227,11 @@ async def kinopoisk_graphql_similars(app: Sanic, kp_id: str) -> list[dict[str, A
 
 async def kinopoisk_graphql_trailers(app: Sanic, kp_id: str) -> list[dict[str, Any]]:
     try:
-        body = load_kinopapi_body("movie", "MovieTrailersWithOrder.json")
-        body["variables"].update({"movieId": int(kp_id), "trailersLimit": 10, "orderBy": "MAKE_DATE_DESC"})
-        data = await kinopoisk_graphql_from_body(
+        data = await kinopoisk_graphql(
             app,
-            body,
+            "MovieMobileDetailsTrailers",
+            operation_document("MovieMobileDetailsTrailers"),
+            {"movieId": int(kp_id), "offset": 0, "limit": 10},
             referer=f"https://www.kinopoisk.ru/film/{kp_id}/",
         )
         items = ((((data.get("data") or {}).get("movie") or {}).get("trailers") or {}).get("items") or [])
@@ -1311,18 +1259,12 @@ async def kinopoisk_graphql_trailers(app: Sanic, kp_id: str) -> list[dict[str, A
 
 async def kinopoisk_graphql_reviews_total(app: Sanic, kp_id: str) -> int | None:
     try:
-        body = load_kinopapi_body("movie", "MovieUsersReviews.json")
-        body["variables"].update(
-            {
-                "movieId": int(kp_id),
-                "userReviewsOrderBy": "TOP_USEFULNESS_THEN_CREATED_AT_DESC",
-                "userReviewsLimit": 1,
-                "withUserData": False,
-            }
-        )
-        data = await kinopoisk_graphql_from_body(
+        data = await kinopoisk_graphql(
             app,
-            body,
+            "MovieUsersReviews",
+            operation_document("MovieUsersReviews"),
+            {"movieId": int(kp_id), "userReviewsOrderBy": "TOP_USEFULNESS_THEN_CREATED_AT_DESC",
+             "userReviewsLimit": 1, "withUserData": False, "withSummaryReview": False},
             referer=f"https://www.kinopoisk.ru/film/{kp_id}/",
         )
         reviews = (((data.get("data") or {}).get("movie") or {}).get("usersReviewsPaginatedList") or {})
@@ -1383,17 +1325,19 @@ async def imdb_to_kp_id(app: Sanic, imdb_id: str) -> str | None:
     cache_key = f"imdb_to_kp:{imdb_id.lower()}"
 
     async def factory() -> str | None:
-        ensure_provider_token(app.ctx.settings.kinopoisk_token, "Kinopoisk token is missing")
-        payload = await fetch_json(
-            app,
-            f"{KINOPOISK_API_BASE}/api/v2.2/films",
-            headers={"X-API-KEY": app.ctx.settings.kinopoisk_token},
-            params={"imdbId": imdb_id},
-        )
-
-        items = payload.get("items") or []
-        for item in items:
-            kp_id = clean_digits(item.get("kinopoiskId") or item.get("filmId"))
+        query = f'SELECT ?kp WHERE {{ ?item wdt:P345 "{imdb_id}"; wdt:P2603 ?kp. }} LIMIT 1'
+        try:
+            payload = await fetch_json(
+                app,
+                WIKIDATA_SPARQL_URL,
+                headers={"Accept": "application/sparql-results+json", "User-Agent": generic_user_agent()},
+                params={"query": query, "format": "json"},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Wikidata Kinopoisk lookup failed for imdb_id=%s: %s", imdb_id, exc)
+            return None
+        for binding in ((payload.get("results") or {}).get("bindings") or []):
+            kp_id = clean_digits(((binding.get("kp") or {}).get("value")))
             if kp_id:
                 return kp_id
         return None
@@ -1959,14 +1903,31 @@ async def get_top_movies(
     cache_key = f"top:{period}:{type_filter}:{limit or 0}"
 
     async def factory() -> list[dict[str, Any]]:
-        ensure_provider_token(app.ctx.settings.kinopoisk_token, "Kinopoisk token is missing")
-        payload = await fetch_json(
+        data = await kinopoisk_graphql(
             app,
-            f"{KINOPOISK_API_BASE}/api/v2.2/films/collections",
-            headers={"X-API-KEY": app.ctx.settings.kinopoisk_token},
-            params={"type": "TOP_POPULAR_ALL", "page": 1},
+            "MovieTouchListPage",
+            operation_document("MovieTouchListPage"),
+            {
+                "slug": "popular-films",
+                "withUserData": False,
+                "supportedFilterTypes": [],
+                "singleSelectFiltersLimit": 0,
+                "singleSelectFiltersOffset": 0,
+                "moviesLimit": min(limit or 50, 100),
+                "moviesOffset": 0,
+            },
         )
-        items = [normalize_top_item(item) for item in payload.get("items") or []]
+        movies = ((((data.get("data") or {}).get("movieListBySlug") or {}).get("movies") or {}).get("items") or [])
+        items = []
+        for entry in movies:
+            movie = entry.get("movie") or {}
+            if movie.get("id"):
+                normalized = normalize_gql_search_movie({
+                    **movie,
+                    "poster": (((movie.get("gallery") or {}).get("posters") or {}).get("vertical") or {}),
+                })
+                normalized["year"] = str(movie.get("productionYear") or "")
+                items.append(normalized)
 
         if type_filter == "movie":
             items = [item for item in items if item["raw_data"].get("type") == "FILM"]

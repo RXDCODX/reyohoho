@@ -20,7 +20,10 @@
         </div>
       </div>
 
-      <div v-if="notificationsStore.loading" class="loading-container">
+      <div v-if="!available" class="empty-state">
+        Уведомления пока недоступны для этого аккаунта.
+      </div>
+      <div v-else-if="notificationsStore.loading" class="loading-container">
         <SpinnerLoading />
         <p class="loading-text">Загрузка уведомлений...</p>
       </div>
@@ -54,7 +57,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
+import { accountCapabilities } from '@/api/accountCapabilities'
 import { useNotificationsStore } from '@/store/notifications'
 import { useAuthStore } from '@/store/auth'
 import { useRouter } from 'vue-router'
@@ -64,33 +68,46 @@ import ErrorMessage from './ErrorMessage.vue'
 
 const notificationsStore = useNotificationsStore()
 const authStore = useAuthStore()
+const available = computed(() => accountCapabilities(authStore).notifications)
 const router = useRouter()
 
 const loading = ref(false)
 
 const notifications = computed(() => notificationsStore.notifications)
 
-onMounted(async () => {
-  if (!authStore.token) {
-    router.push('/login')
-    return
-  }
-
-  await fetchNotifications()
-
-  startPolling()
-})
-
 onUnmounted(() => {
   stopPolling()
 })
 
 let pollingInterval = null
+let disposed = false
+onUnmounted(() => {
+  disposed = true
+})
+watch(
+  () => authStore.token,
+  async (token) => {
+    stopPolling()
+    notificationsStore.reset()
+    if (!token) {
+      router.push('/login')
+      return
+    }
+    if (!available.value) return
+    await fetchNotifications()
+    if (!disposed && authStore.token === token && available.value) startPolling()
+  },
+  { immediate: true }
+)
 
 function startPolling() {
-  pollingInterval = setInterval(() => {
-    notificationsStore.fetchUnreadCount()
-  }, 1000 * 60 * 5 ) // 30 minutes
+  stopPolling()
+  pollingInterval = setInterval(
+    () => {
+      notificationsStore.fetchUnreadCount()
+    },
+    1000 * 60 * 5
+  )
 }
 
 function stopPolling() {

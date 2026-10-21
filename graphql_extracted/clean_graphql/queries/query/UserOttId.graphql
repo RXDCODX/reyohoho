@@ -1,7 +1,0 @@
-query UserOttId {
-  userProfile {
-    id {
-      ottId
-    }
-  }
-}

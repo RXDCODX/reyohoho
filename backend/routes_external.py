@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,6 +20,13 @@ bp = Blueprint("external_integrations")
 
 
 async def enrich_movie(request: Request, movie_data: dict[str, Any], kp_id: str) -> dict[str, Any]:
+    # Provider caches and persistent metadata must contain public data only.
+    movie_data = deepcopy(movie_data)
+    movie_data.pop("nudity_timings", None)
+    movie_data["lists"] = {
+        key: False for key in ("isFavorite", "isHistory", "isLater",
+                               "isCompleted", "isAbandoned", "isWatching", "isRated")
+    }
     session = request.ctx.db
     existing = await session.get(Movie, kp_id)
     if existing is None:
@@ -27,13 +35,13 @@ async def enrich_movie(request: Request, movie_data: dict[str, Any], kp_id: str)
             imdb_id=movie_data.get("imdb_id"),
             shiki_id=movie_data.get("shikimori_id"),
             type="series" if movie_data.get("serial") else "movie",
-            metadata_json=movie_data,
+            metadata_json=deepcopy(movie_data),
         )
         session.add(existing)
     else:
         existing.imdb_id = movie_data.get("imdb_id") or existing.imdb_id
         existing.shiki_id = movie_data.get("shikimori_id") or existing.shiki_id
-        existing.metadata_json = movie_data
+        existing.metadata_json = deepcopy(movie_data)
     session.add(ViewEvent(kp_id=kp_id))
     user = getattr(request.ctx, "user", None)
     if user is not None:

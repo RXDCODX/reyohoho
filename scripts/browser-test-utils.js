@@ -19,7 +19,6 @@ export const ignoredFailedUrlPatterns = [
   /goatcounter/,
   /favicon\.ico/,
   /stravers\.live/,
-  /api4\.rhserv\.vu\//,
   /avatars\.mds\.yandex\.net/,
   /st\.kp\.yandex\.net/
 ]
@@ -28,7 +27,6 @@ export const isIgnoredFailure = (url) =>
   ignoredFailedUrlPatterns.some((pattern) => pattern.test(url))
 
 const ignoredConsoleMessagePatterns = [
-  /api4\.rhserv\.vu\//,
   /^Error loading rating: AxiosError: Network Error/
 ]
 
@@ -57,6 +55,35 @@ export async function createCleanContext(browser, options = {}) {
   await cdp.send('Network.clearBrowserCookies')
 
   await page.addInitScript(() => {
+    window.__reyohohoVitals = { layoutShifts: [], interactions: [], lcp: null }
+    if ('PerformanceObserver' in window) {
+      try {
+        new PerformanceObserver((entries) => {
+          for (const entry of entries.getEntries())
+            window.__reyohohoVitals.lcp = entry.startTime
+        }).observe({ type: 'largest-contentful-paint', buffered: true })
+        new PerformanceObserver((entries) => {
+          for (const entry of entries.getEntries()) {
+            if (!entry.hadRecentInput)
+              window.__reyohohoVitals.layoutShifts.push({
+                value: entry.value,
+                startTime: entry.startTime
+              })
+          }
+        }).observe({ type: 'layout-shift', buffered: true })
+        new PerformanceObserver((entries) => {
+          for (const entry of entries.getEntries()) {
+            if (entry.interactionId)
+              window.__reyohohoVitals.interactions.push({
+                duration: entry.duration,
+                interactionId: entry.interactionId
+              })
+          }
+        }).observe({ type: 'event', buffered: true, durationThreshold: 16 })
+      } catch {
+        // Unsupported entry types remain unavailable in this browser.
+      }
+    }
     localStorage.clear()
     sessionStorage.clear()
     indexedDB.databases?.().then((databases) => {
@@ -156,15 +183,75 @@ export async function collectPerformance(page) {
     const paint = Object.fromEntries(
       performance.getEntriesByType('paint').map((entry) => [entry.name, entry.startTime])
     )
+    const vitals = window.__reyohohoVitals || {}
+    const shifts = vitals.layoutShifts || []
+    let cls = 0
+    let sessionValue = 0
+    let sessionStart = 0
+    let previousShift = 0
+    for (const shift of shifts) {
+      if (shift.startTime - previousShift > 1000 || shift.startTime - sessionStart > 5000) {
+        cls = Math.max(cls, sessionValue)
+        sessionValue = 0
+        sessionStart = shift.startTime
+      }
+      sessionValue += shift.value
+      previousShift = shift.startTime
+    }
+    cls = Math.max(cls, sessionValue)
+    const interactionGroups = new Map()
+    for (const entry of vitals.interactions || []) {
+      interactionGroups.set(
+        entry.interactionId,
+        Math.max(interactionGroups.get(entry.interactionId) || 0, entry.duration)
+      )
+    }
+    const longestObservedInteraction = Math.max(0, ...interactionGroups.values())
 
     return {
       domContentLoaded: Math.round(nav?.domContentLoadedEventEnd || 0),
       loadEventEnd: Math.round(nav?.loadEventEnd || 0),
       firstPaint: Math.round(paint['first-paint'] || 0),
       firstContentfulPaint: Math.round(paint['first-contentful-paint'] || 0),
+      labVitals: {
+        lcp: Number.isFinite(vitals.lcp) ? Math.round(vitals.lcp) : null,
+        cls: Number(cls.toFixed(4)),
+        maxInteractionDuration: longestObservedInteraction
+          ? Math.round(longestObservedInteraction)
+          : null,
+        interactionMetric: 'longest observed Event Timing entry; not field INP'
+      },
       transferSize: resources.reduce((total, entry) => total + (entry.transferSize || 0), 0),
       encodedBodySize: resources.reduce((total, entry) => total + (entry.encodedBodySize || 0), 0),
-      resourceCount: resources.length
+      resourceCount: resources.length,
+      resourceTypes: resources.reduce((counts, entry) => {
+        const type = entry.initiatorType || 'other'
+        counts[type] = (counts[type] || 0) + 1
+        return counts
+      }, {})
     }
   })
 }
+
+export const summarizeResourceTransfer = (responses) => {
+  const known = responses.filter((response) => Number.isFinite(response.bytes) && response.bytes > 0)
+  const knownBytes = known.reduce((total, response) => total + response.bytes, 0)
+  return {
+    responseCount: responses.length,
+    knownSizeCount: known.length,
+    unknownSizeCount: responses.length - known.length,
+    knownContentLengthBytes: knownBytes
+  }
+}
+
+export const summarizeBrowserResources = (resources) => ({
+  count: resources.length,
+  encodedBodyBytes: resources.reduce((total, resource) => total + (resource.encodedBodySize || 0), 0),
+  transferBytes: resources.reduce((total, resource) => total + (resource.transferSize || 0), 0),
+  scripts: resources
+    .filter((resource) => resource.initiatorType === 'script')
+    .map((resource) => ({ name: resource.name, bytes: resource.encodedBodySize || 0 })),
+  stylesheets: resources
+    .filter((resource) => resource.initiatorType === 'link')
+    .map((resource) => ({ name: resource.name, bytes: resource.encodedBodySize || 0 }))
+})

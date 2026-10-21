@@ -7,16 +7,22 @@
     <!-- Google Tag Manager -->
     <script>
       ;(function (w, d, s, l, i) {
+        if (w.loadReyohohoAnalytics) return
+
         var loaded = false
         var disabledHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']
+        w[l] = w[l] || []
 
         w.loadReyohohoAnalytics = function () {
           var authCallback = /\/auth-success\/?$/.test(w.location.pathname)
-          if (loaded || authCallback || disabledHosts.includes(w.location.hostname)) return false
+          var localHost =
+            disabledHosts.includes(w.location.hostname) ||
+            w.location.hostname.endsWith('.localhost')
+          if (loaded || authCallback || localHost) return false
 
           loaded = true
-          w[l] = w[l] || []
-          w[l].push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' })
+          // Initialize the container before it replays events queued during the delay.
+          w[l].unshift({ 'gtm.start': new Date().getTime(), event: 'gtm.js' })
           var f = d.getElementsByTagName(s)[0],
             j = d.createElement(s),
             dl = l != 'dataLayer' ? '&l=' + l : ''
@@ -25,29 +31,24 @@
           f.parentNode.insertBefore(j, f)
           return true
         }
-
-        w.loadReyohohoAnalytics()
       })(window, document, 'script', 'dataLayer', 'GTM-NVWTCVZH')
     </script>
     <!-- End Google Tag Manager -->
-    <meta
-      name="google-site-verification"
-      content="ZpZSe2uX6-XmN3z7iQnT9h4UzCVDK8oMP0kFfmNmhP0"
-    />
+    <meta name="google-site-verification" content="ZpZSe2uX6-XmN3z7iQnT9h4UzCVDK8oMP0kFfmNmhP0" />
     <meta name="yandex-verification" content="c66cb57309899a18" />
     <meta
       name="description"
       content="ReYohoho - онлайн поиск и просмотр фильмов и сериалов. Подборки, рейтинги, история просмотра и удобная навигация."
     />
-    <link rel="canonical" href="https://dav2010id.github.io/reyohoho/" />
+    <link rel="canonical" href="https://reyhoho.fun/" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://dav2010id.github.io/reyohoho/" />
+    <meta property="og:url" content="https://reyhoho.fun/" />
     <meta property="og:title" content="ReYohoho - онлайн просмотр фильмов и сериалов" />
     <meta
       property="og:description"
       content="ReYohoho - онлайн поиск и просмотр фильмов и сериалов. Подборки, рейтинги, история просмотра и удобная навигация."
     />
-    <meta property="og:image" content="https://dav2010id.github.io/reyohoho/favicon.ico" />
+    <meta property="og:image" content="https://reyhoho.fun/favicon.ico" />
 
     <!-- Иконка и заголовок -->
     <link rel="icon" href="%BASE_URL%favicon.ico" />
@@ -62,17 +63,17 @@
     <link rel="apple-touch-icon" href="%BASE_URL%icons/icon-192x192.png" />
 
     <!-- Импорт иконок -->
-    <link
-      rel="stylesheet"
-      href="/node_modules/@fortawesome/fontawesome-free/css/fontawesome.min.css"
-    />
+    <link rel="stylesheet" href="/src/assets/fontawesome-subset.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="preload"
       as="style"
       href="https://fonts.googleapis.com/css2?family=Neucha&family=Roboto:ital,wght@0,100..900;1,100..900&display=swap"
-      onload="this.onload=null;this.rel='stylesheet'"
+      onload="
+        this.onload = null
+        this.rel = 'stylesheet'
+      "
     />
     <noscript>
       <link
@@ -110,20 +111,33 @@
     <script type="module" src="/src/main.js"></script>
     <script>
       ;(() => {
-        const isLocalhost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(
-          window.location.hostname
-        )
+        if (window.loadReyohohoGoatCounter) return
+        let loaded = false
 
-        if (isLocalhost) return
+        window.loadReyohohoGoatCounter = () => {
+          const hostname = window.location.hostname
+          const isLocalhost =
+            ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'].includes(hostname) ||
+            hostname.endsWith('.localhost')
+          if (loaded || isLocalhost || /\/auth-success\/?$/.test(window.location.pathname)) {
+            return false
+          }
 
-        window.goatcounter = window.goatcounter || {}
-        window.goatcounter.no_onload = true
+          loaded = true
+          window.goatcounter = window.goatcounter || {}
+          window.goatcounter.no_onload = true
 
-        const script = document.createElement('script')
-        script.dataset.goatcounter = 'https://reyohoho.goatcounter.com/count'
-        script.async = true
-        script.src = '%BASE_URL%goatcounter/count.v5.js'
-        document.body.appendChild(script)
+          const script = document.createElement('script')
+          script.dataset.goatcounter = 'https://reyohoho.goatcounter.com/count'
+          script.async = true
+          script.src = '%BASE_URL%goatcounter/count.v5.js'
+          script.onload = () => {
+            script.onload = null
+            window.goatcounter.reyohohoFlush?.()
+          }
+          document.body.appendChild(script)
+          return true
+        }
       })()
     </script>
   </body>

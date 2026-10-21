@@ -3,14 +3,13 @@ import { CONTENT_PROVIDERS } from '@/api/providerRegistry'
 const REMOTE_PLAYER_PROVIDERS = [
   CONTENT_PROVIDERS.DDBB,
   CONTENT_PROVIDERS.DDBB_LIVE,
-  CONTENT_PROVIDERS.KINOBOX,
-  CONTENT_PROVIDERS.KINOBD
+  CONTENT_PROVIDERS.KINOBOX
+  // CONTENT_PROVIDERS.KINOBD // Temporarily disabled.
 ]
 
 const REMOTE_MOVIE_INFO_PROVIDERS = [
-  CONTENT_PROVIDERS.RHSERV,
-  CONTENT_PROVIDERS.KINOBOX,
-  CONTENT_PROVIDERS.KINOBD
+  CONTENT_PROVIDERS.KINOBOX
+  // CONTENT_PROVIDERS.KINOBD // Temporarily disabled.
 ]
 
 const configuredFirst = (configuredProvider, providers) => [
@@ -21,11 +20,14 @@ const configuredFirst = (configuredProvider, providers) => [
 export const getPlayerProviderOrder = (configuredProvider) => {
   if (configuredProvider === CONTENT_PROVIDERS.LOCAL) return [CONTENT_PROVIDERS.LOCAL]
 
-  const aggregateProviders = [CONTENT_PROVIDERS.DDBB]
-  return configuredFirst(configuredProvider, [
-    ...REMOTE_PLAYER_PROVIDERS.filter((provider) => provider === configuredProvider),
-    ...aggregateProviders
-  ])
+  // Player discovery is a fallback chain, not a combined list of mirrors.
+  return [
+    CONTENT_PROVIDERS.DDBB,
+    ...(configuredProvider === CONTENT_PROVIDERS.DDBB_LIVE
+      ? [CONTENT_PROVIDERS.DDBB_LIVE]
+      : []),
+    CONTENT_PROVIDERS.KINOBOX
+  ].filter((provider) => REMOTE_PLAYER_PROVIDERS.includes(provider))
 }
 
 export const getMovieInfoProviderOrder = (configuredProvider) => {

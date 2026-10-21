@@ -1,7 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { assessPlayerIframe, getPersistablePlayerKey } from './playerSecurity'
+import { assessPlayerIframe, getPersistablePlayerKey, getSafePlayerUrl } from './playerSecurity'
 
 describe('player iframe security assessment', () => {
+  it.each([
+    'javascript:alert(1)',
+    'java\nscript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'blob:https://app.example/id',
+    'file:///etc/passwd',
+    'http://untrusted.example',
+    'https://user:password@player.example'
+  ])('rejects unsafe iframe %s', (url) => {
+    expect(getSafePlayerUrl(url, 'https://app.example')).toBeNull()
+  })
+  it.each([
+    'https://player.example/embed/301?token=x',
+    '//player.example/embed/301',
+    '/player/301',
+    'http://localhost:5173/player'
+  ])('accepts compatible player %s', (url) => {
+    expect(getSafePlayerUrl(url, 'https://app.example')).toBe(url)
+  })
   it('recognizes same-origin and reviewed players', () => {
     expect(
       assessPlayerIframe({

@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { useAuthStore } from '@/store/auth'
 import { LOCAL_API_URL } from '@/store/api'
+import { isTrustedApiRequest } from '@/utils/apiTrust'
 
 export const localApi = axios.create({
   baseURL: LOCAL_API_URL,
@@ -11,10 +12,18 @@ export const localApi = axios.create({
 localApi.interceptors.request.use((config) => {
   const authStore = useAuthStore()
   config.headers = config.headers || {}
-  if (authStore.token) {
+  if (
+    authStore.token &&
+    !authStore.token.startsWith('rh1_') &&
+    isTrustedApiRequest({ baseURL: config.baseURL, url: config.url })
+  ) {
     config.headers.Authorization = `Bearer ${authStore.token}`
   } else {
-    delete config.headers.Authorization
+    if (typeof config.headers.delete === 'function') config.headers.delete('Authorization')
+    else
+      for (const key of Object.keys(config.headers)) {
+        if (key.toLowerCase() === 'authorization') delete config.headers[key]
+      }
   }
   return config
 })
@@ -62,41 +71,6 @@ const setRating = async (kpId, rating) => {
   return data
 }
 
-const getComments = async (movieId, requestConfig = {}) =>
-  (await localApi.get(`/comments/${movieId}`, requestConfig)).data
-const createComment = async (movieId, content, parentId = null) =>
-  (await localApi.post(`/comments/${movieId}`, { content, parent_id: parentId })).data
-const updateComment = async (commentId, content) =>
-  (await localApi.put(`/comments/${commentId}`, { content })).data
-const deleteComment = async (commentId) => (await localApi.delete(`/comments/${commentId}`)).data
-const rateComment = async (commentId, rating) =>
-  (await localApi.post(`/comments/${commentId}/rate`, { rating })).data
-const submitTiming = async (kpId, timingText) =>
-  (await localApi.post(`/timings/${kpId}`, { timing_text: timingText })).data
-const updateTiming = async (timingId, timingText) =>
-  (await localApi.put(`/timings/${timingId}`, { timing_text: timingText })).data
-const deleteTiming = async (timingId) => (await localApi.delete(`/timings/${timingId}`)).data
-const reportTiming = async (timingId, reportText) =>
-  (await localApi.post(`/timings/${timingId}/report`, { report_text: reportText })).data
-const getTopTimingSubmitters = async () => (await localApi.get('/timings/top')).data
-const getAllTimingSubmissions = async () => (await localApi.get('/timings/all')).data
-const approveTiming = async (submissionId) =>
-  (await localApi.post(`/timings/submission/${submissionId}/approve`)).data
-const rejectTiming = async (submissionId) =>
-  (await localApi.post(`/timings/submission/${submissionId}/reject`)).data
-const markAsCleanText = async (submissionId) =>
-  (await localApi.post(`/timings/submission/${submissionId}/clean_text`)).data
-const voteOnTiming = async (timingId, voteType) =>
-  (await localApi.post(`/timings/${timingId}/vote`, { vote_type: voteType })).data
-const getTimingVote = async (timingId) => (await localApi.get(`/timings/${timingId}/vote`)).data
-const getMovieNote = async (kpId) => (await localApi.get(`/movies/${kpId}/note`)).data
-const saveMovieNote = async (kpId, noteText) =>
-  (await localApi.post(`/movies/${kpId}/note`, { note_text: noteText })).data
-const deleteMovieNote = async (kpId) => (await localApi.delete(`/movies/${kpId}/note`)).data
-const getNudityInfoFromIMDB = async (imdbId) =>
-  (await localApi.get(`/imdb_parental_guide/${imdbId}`)).data
-const getTwitchStream = async (username) => (await localApi.get(`/twitch/${username}`)).data
-
 const getShikiPlayers = async (shikiId) => {
   const { data } = await localApi.post(
     '/cache_shiki',
@@ -136,27 +110,6 @@ export {
   getPlayers,
   getRating,
   setRating,
-  getComments,
-  createComment,
-  updateComment,
-  deleteComment,
-  rateComment,
-  submitTiming,
-  updateTiming,
-  deleteTiming,
-  reportTiming,
-  getTopTimingSubmitters,
-  getAllTimingSubmissions,
-  approveTiming,
-  rejectTiming,
-  markAsCleanText,
-  voteOnTiming,
-  getTimingVote,
-  getMovieNote,
-  saveMovieNote,
-  deleteMovieNote,
-  getNudityInfoFromIMDB,
-  getTwitchStream,
   getShikiPlayers,
   getMovies,
   getDiscussedMovies,

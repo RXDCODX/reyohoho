@@ -1,16 +1,34 @@
 import axios from 'axios'
-import { getCurrentApiUrl } from '@/firebase/firebase'
 import { useAuthStore } from '@/store/auth'
 import { useApiStore } from '@/store/api'
 import { isTrustedApiRequest } from '@/utils/apiTrust'
+import { getCurrentApiUrl } from './backendConfig'
 
 let apiInstance = null
 let apiInstancePromise = null
 let apiInstanceGeneration = 0
+const SENSITIVE_QUERY_KEYS =
+  /^(?:token|access_token|auth|authorization|code|key|api_key|apikey|secret|password|signature|sig)$/i
+
+export const redactRequestUrl = (value, baseURL = '') => {
+  try {
+    const url = new URL(value || '', baseURL || undefined)
+    if (!/^https?:$/.test(url.protocol)) return '[non-http URL]'
+    for (const key of [...url.searchParams.keys()])
+      url.searchParams.set(key, SENSITIVE_QUERY_KEYS.test(key) ? '[REDACTED]' : '[omitted]')
+    url.username = ''
+    url.password = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return String(value || '').split(/[?#]/, 1)[0] || '[unknown URL]'
+  }
+}
 
 const getResolvedBaseUrl = async () => {
-  const apiStore = useApiStore()
-  return apiStore.currentApiUrl || (await getCurrentApiUrl())
+  const baseURL = await getCurrentApiUrl()
+  if (!baseURL) throw new Error('Backend API is not configured (VITE_APP_API_URL)')
+  return baseURL
 }
 
 const attachDynamicRequestState = (instance) => {
@@ -26,10 +44,15 @@ const attachDynamicRequestState = (instance) => {
       const canAttachAuthorization = isTrustedApiRequest({ baseURL, url: config.url })
       delete instance.defaults.headers.common['Authorization']
 
-      if (authStore.token && canAttachAuthorization) {
+      // Opaque Worker sessions MUST NOT be forwarded to the legacy backend.
+      if (authStore.token && !authStore.token.startsWith('rh1_') && canAttachAuthorization) {
         config.headers.Authorization = `Bearer ${authStore.token}`
       } else {
-        delete config.headers.Authorization
+        if (typeof config.headers.delete === 'function') config.headers.delete('Authorization')
+        else
+          for (const key of Object.keys(config.headers)) {
+            if (key.toLowerCase() === 'authorization') delete config.headers[key]
+          }
       }
 
       return config
@@ -42,15 +65,13 @@ const attachDynamicRequestState = (instance) => {
     (err) => {
       const method = err.config?.method?.toUpperCase?.() || 'REQUEST'
       const baseURL = err.config?.baseURL || instance.defaults.baseURL || ''
-      const url = err.config?.url || ''
-      const requestUrl = url.startsWith('http') ? url : `${baseURL}${url}`
+      const requestUrl = redactRequestUrl(err.config?.url || '', baseURL)
 
       console.error('[API Error]', {
         method,
         url: requestUrl,
         status: err.response?.status,
-        data: err.response?.data,
-        message: err.message
+        message: err.code || 'Request failed'
       })
       return Promise.reject(err)
     }

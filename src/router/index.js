@@ -1,71 +1,23 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import { nextTick } from 'vue'
-import { routes } from './routes'
-import { useMainStore } from '@/store/main'
 import { useAuthStore } from '@/store/auth'
 import { handleHashNavigation } from '@/helpers/hashHandler'
-import { useScrollTracking } from '@/composables/useScrollTracking'
 import { buildMoviePath, getMovieSeoEntry } from '@/utils/movieSeo'
 import {
+  createDeferredAnalyticsLoader,
+  createGoatCounterPageViewSender,
   createSpaPageViewTracker,
   createYandexPageViewSender,
   normalizePageViewUrl
 } from '@/utils/analytics'
 
+const analyticsRouters = new WeakSet()
+
 const shouldSkipPageViewTracking = (to) => {
   const path = to?.path || ''
 
-  return path === '/auth-success' || path === '/reyohoho/auth-success'
+  return /\/auth-success\/?$/.test(path)
 }
-
-const trackGoatCounterPageView = (to, attempt = 0) => {
-  if (typeof window === 'undefined') return
-  if (shouldSkipPageViewTracking(to)) return
-
-  const goatcounter = window.goatcounter
-  if (goatcounter?.count) {
-    goatcounter.count({
-      path: to.fullPath,
-      title: document.title,
-      event: false
-    })
-    return
-  }
-
-  if (attempt < 10) {
-    setTimeout(() => trackGoatCounterPageView(to, attempt + 1), 200)
-  }
-}
-
-export const createRouterOptions = () => ({
-  history: createWebHistory(import.meta.env.VITE_BASE_URL || '/'),
-  routes,
-  scrollBehavior(to, _from, savedPosition) {
-    const { userHasScrolled } = useScrollTracking()
-    const mainStore = useMainStore()
-
-    return new Promise((resolve) => {
-      nextTick(() => {
-        if (to.name === 'movie-info') {
-          return resolve({ top: 0, behavior: 'smooth' })
-        } else if (
-          savedPosition &&
-          mainStore.rememberScrollPosition &&
-          !userHasScrolled.value &&
-          (to.name === 'top-movies' || to.name === 'lists')
-        ) {
-          setTimeout(() => resolve(savedPosition), 1000)
-        } else {
-          resolve({ top: 0, behavior: 'smooth' })
-        }
-      })
-    })
-  }
-})
 
 export const installRouterGuards = (router, { isClient = typeof window !== 'undefined' } = {}) => {
-  const { startTracking } = useScrollTracking()
-
   router.beforeEach((to) => {
     if (to.meta?.requiresAuth) {
       const authStore = useAuthStore()
@@ -96,7 +48,6 @@ export const installRouterGuards = (router, { isClient = typeof window !== 'unde
 
     if (isClient) {
       document.title = to.meta.title || 'ReYohoho'
-      startTracking()
     }
 
     if (to.hash) {
@@ -106,25 +57,33 @@ export const installRouterGuards = (router, { isClient = typeof window !== 'unde
     return true
   })
 
-  if (isClient) {
+  if (isClient && !analyticsRouters.has(router)) {
+    analyticsRouters.add(router)
+    const scheduleAnalyticsLoad = createDeferredAnalyticsLoader()
+    const getPage = () => ({
+      url: normalizePageViewUrl(window.location.href),
+      title: document.title,
+      referrer: document.referrer
+    })
     const trackYandexPageView = createSpaPageViewTracker({
       sendPageView: createYandexPageViewSender(),
-      getPage: () => ({
-        url: normalizePageViewUrl(window.location.href),
-        title: document.title
-      }),
+      getPage,
+      shouldSkip: shouldSkipPageViewTracking
+    })
+    const trackGoatCounterPageView = createSpaPageViewTracker({
+      sendPageView: createGoatCounterPageViewSender(),
+      getPage,
+      automaticInitialPageView: false,
       shouldSkip: shouldSkipPageViewTracking
     })
 
-    router.afterEach((to) => {
-      window.loadReyohohoAnalytics?.()
+    router.afterEach((to, _from, failure) => {
+      if (failure) return
       trackGoatCounterPageView(to)
       trackYandexPageView(to)
+      scheduleAnalyticsLoad()
     })
   }
 
   return router
 }
-
-export const createAppRouter = (options = {}) =>
-  installRouterGuards(createRouter(createRouterOptions()), options)

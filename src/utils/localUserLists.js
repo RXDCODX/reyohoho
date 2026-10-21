@@ -9,22 +9,27 @@ const emptyLists = () => ({
   history: []
 })
 
-const readLists = () => {
+const storageKey = (owner) =>
+  owner === 'guest' ? STORAGE_KEY : `${STORAGE_KEY}:${encodeURIComponent(owner)}`
+const readLists = (owner = 'guest') => {
   if (typeof window === 'undefined') return emptyLists()
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}
+    const parsed = JSON.parse(localStorage.getItem(storageKey(owner))) || {}
     return Object.fromEntries(
-      Object.keys(emptyLists()).map((type) => [type, Array.isArray(parsed[type]) ? parsed[type] : []])
+      Object.keys(emptyLists()).map((type) => [
+        type,
+        Array.isArray(parsed[type]) ? parsed[type] : []
+      ])
     )
   } catch {
     return emptyLists()
   }
 }
 
-const writeLists = (lists) => {
+const writeLists = (lists, owner = 'guest') => {
   if (typeof window === 'undefined') return false
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(lists))
+    localStorage.setItem(storageKey(owner), JSON.stringify(lists))
     return true
   } catch {
     return false
@@ -39,31 +44,31 @@ const normalizeItem = (id, metadata = {}) => ({
   poster: metadata?.poster || metadata?.poster_url_preview || metadata?.poster_url || ''
 })
 
-export const getLocalList = (type) => readLists()[type] || []
+export const getLocalList = (type, owner = 'guest') => readLists(owner)[type] || []
 
-export const replaceLocalList = (type, items) => {
-  const lists = readLists()
+export const replaceLocalList = (type, items, owner = 'guest') => {
+  const lists = readLists(owner)
   lists[type] = (items || []).map((item) =>
     normalizeItem(item?.kp_id || item?.kinopoisk_id || item?.id, item)
   )
-  writeLists(lists)
+  writeLists(lists, owner)
 }
 
-export const addLocalListItem = (type, id, metadata = {}) => {
-  const lists = readLists()
+export const addLocalListItem = (type, id, metadata = {}, owner = 'guest') => {
+  const lists = readLists(owner)
   const item = normalizeItem(id, metadata || {})
   lists[type] = [item, ...(lists[type] || []).filter((entry) => String(entry.kp_id) !== String(id))]
-  writeLists(lists)
+  writeLists(lists, owner)
 }
 
-export const removeLocalListItem = (type, id) => {
-  const lists = readLists()
+export const removeLocalListItem = (type, id, owner = 'guest') => {
+  const lists = readLists(owner)
   lists[type] = (lists[type] || []).filter((entry) => String(entry.kp_id) !== String(id))
-  writeLists(lists)
+  writeLists(lists, owner)
 }
 
-export const clearLocalList = (type) => {
-  const lists = readLists()
+export const clearLocalList = (type, owner = 'guest') => {
+  const lists = readLists(owner)
   lists[type] = []
-  writeLists(lists)
+  writeLists(lists, owner)
 }

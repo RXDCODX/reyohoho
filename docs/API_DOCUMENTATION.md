@@ -1,12 +1,18 @@
 # API документация проекта ReYohoho
 
+При `VITE_WORKER_AUTH_ENABLED=true` Telegram-вход, профиль, приватные списки и
+история используют Worker API: [worker-telegram.md](worker-telegram.md) и
+[cloud-history.md](cloud-history.md). Worker-токены не отправляются в прежний
+backend. Описанные ниже GET-маршруты Telegram относятся к Python backend;
+Worker использует POST с JSON.
+
 ## 1) Базовый API backend
 
 - HTTP-клиент: `axios` через [`src/api/axios.js`](../src/api/axios.js)
 - Базовый URL берется динамически:
   - сначала из Firebase Remote Config (`api_endpoints`),
   - если не удалось, используется `VITE_APP_API_URL`.
-- Fallback в текущем `.env`: `https://api4.rhserv.vu`
+- Публичный backend в текущем `.env` не настроен; для аккаунтов и функций backend задайте `VITE_APP_API_URL` адресом своего сервера.
 - Если есть токен, заголовок `Authorization: Bearer <token>` добавляется только
   для exact origin из trusted allowlist:
   - origin `VITE_APP_API_URL`;

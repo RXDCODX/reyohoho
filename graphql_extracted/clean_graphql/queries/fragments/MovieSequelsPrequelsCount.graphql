@@ -1,7 +1,0 @@
-fragment MovieSequelsPrequelsCount on Movie {
-  sequelsPrequelsCount: relatedMovies(limit: 0, type: [BEFORE, AFTER, REMAKE]) {
-    total
-    __typename
-  }
-  __typename
-}

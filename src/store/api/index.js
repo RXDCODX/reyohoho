@@ -13,7 +13,7 @@ export const useApiStore = defineStore(API_STORE_NAME, {
     availableEndpoints: [],
     lastCheckedAt: null,
     isCheckingHealth: false,
-    fallbackUrl: import.meta.env.VITE_APP_API_URL,
+    fallbackUrl: import.meta.env.VITE_APP_API_URL || null,
     endpointsHash: null,
     backendMode: 'auto',
     backendModeUserSelected: false,
@@ -23,6 +23,7 @@ export const useApiStore = defineStore(API_STORE_NAME, {
 
   actions: {
     async checkEndpointHealth(url) {
+      if (!url) return false
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 5000)
       try {
@@ -156,14 +157,14 @@ export const useApiStore = defineStore(API_STORE_NAME, {
 
     getCurrentApiDescription() {
       if (this.backendMode === 'local') {
-        return 'Локальный backend'
+        return 'Локальный сервер'
       }
       if (!this.currentApiUrl || !this.availableEndpoints.length) {
-        return 'Fallback API'
+        return 'Резервный сервер'
       }
 
       const endpoint = this.availableEndpoints.find((ep) => ep.url === this.currentApiUrl)
-      return endpoint ? endpoint.description : 'Unknown API'
+      return endpoint ? endpoint.description : 'Неизвестный сервер'
     },
 
     shouldRecheckEndpoints() {

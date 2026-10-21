@@ -14,10 +14,13 @@ export const useCommentsData = ({ movieId, fetchComments }) => {
     commentsLoading.value = true
     commentsLoadError.value = ''
     try {
-      comments.value = (await fetchComments(movieId(), { signal: controller.signal })) || []
+      const loaded = await fetchComments(movieId(), { signal: controller.signal })
+      if (activeController !== controller || controller.signal.aborted) return null
+      comments.value = loaded || []
       return true
     } catch (error) {
-      if (isRequestCanceled(error)) return null
+      if (activeController !== controller || controller.signal.aborted || isRequestCanceled(error))
+        return null
       commentsLoadError.value = 'Не удалось загрузить комментарии.'
       return false
     } finally {

@@ -2,12 +2,14 @@ import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 import eslintPlugin from 'vite-plugin-eslint'
+import { createPwaShell } from './scripts/pwa-shell.js'
 
 const base = process.env.VITE_BASE_URL || '/'
 
 export default defineConfig(({ mode }) => {
   process.env = { ...process.env, ...loadEnv(mode, process.cwd()) }
   const isDistEnv = process.env.NODE_ENV === 'production'
+  const shell = createPwaShell()
   const now = new Date()
   const formattedDate =
     now
@@ -28,15 +30,38 @@ export default defineConfig(({ mode }) => {
     base: base,
     plugins: [
       vue(),
+      shell.plugin,
       VitePWA({
         registerType: 'autoUpdate',
         injectRegister: 'inline',
-        includeAssets: ['favicon.ico', 'robots.txt', 'icons/*'],
+        includeAssets: ['favicon.ico', 'icons/icon-192x192.png', 'icons/icon-512x512.png'],
+        includeManifestIcons: false,
         workbox: {
           clientsClaim: true,
           skipWaiting: true,
           maximumFileSizeToCacheInBytes: 3000000,
-          globPatterns: ['**/*.{js,css,webp,png,svg,ico,woff2,json,webmanifest}']
+          globPatterns: ['index.html', 'assets/immutable/**/*.{js,css,webp,png,svg,ico,woff2,ttf}'],
+          manifestTransforms: [shell.transform],
+          runtimeCaching: [
+            {
+              // Only fingerprinted local build assets: never API responses or credentials.
+              urlPattern: ({ url, sameOrigin }) =>
+                sameOrigin &&
+                url.pathname.startsWith(new URL('assets/immutable/', self.registration.scope).pathname),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'immutable-assets-v1',
+                cacheableResponse: { statuses: [200] },
+                expiration: {
+                  maxEntries: 160,
+                  maxAgeSeconds: 30 * 24 * 60 * 60,
+                  purgeOnQuotaError: true
+                }
+              }
+            }
+          ],
+          navigateFallback: `${base}index.html`,
+          navigateFallbackDenylist: [/^\/api\//, /auth-success/, /history-transfer/]
         },
         build: {
           rollupOptions: {
@@ -129,9 +154,11 @@ export default defineConfig(({ mode }) => {
       cssCodeSplit: true,
       rollupOptions: {
         output: {
+          assetFileNames: 'assets/immutable/[name]-[hash][extname]',
+          chunkFileNames: 'assets/immutable/[name]-[hash].js',
+          entryFileNames: 'assets/immutable/[name]-[hash].js',
           manualChunks(id) {
             if (!id.includes('node_modules')) return
-            if (id.includes('/firebase/') || id.includes('@firebase')) return 'vendor-firebase'
             if (id.includes('/dompurify/')) return 'vendor-sanitize'
             if (id.includes('/axios/')) return 'vendor-http'
             if (id.includes('/vue') || id.includes('/pinia') || id.includes('@unhead')) {

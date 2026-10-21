@@ -135,13 +135,6 @@ describe('Тесты компонента MovieList', () => {
         ],
         stubs: {
           SpinnerLoading
-        },
-        directives: {
-          lazy: {
-            mounted(el, binding) {
-              el.src = binding.value
-            }
-          }
         }
       },
       props: { moviesList: movies, isHistory, loading },
@@ -153,6 +146,31 @@ describe('Тесты компонента MovieList', () => {
     const wrapper = mountComponent()
     expect(wrapper.findAllComponents(CardMovie)).toHaveLength(BASE_MOVIES_MOCK.length)
     expect(wrapper.findComponent(SpinnerLoading).exists()).toBe(false)
+  })
+
+  it('ignores keyboard events belonging to another mounted list', async () => {
+    const first = mountComponent(false, true)
+    const second = mountComponent(false, false, BASE_MOVIES_MOCK.slice(0, 2))
+    const cards = second.findAllComponents(CardMovie)
+    cards[0].element.focus()
+    await cards[0].trigger('keydown', { key: 'ArrowRight' })
+    await flushPromises()
+    expect(first.find('.movie-card.active').exists()).toBe(false)
+    expect(document.activeElement).toBe(cards[1].element)
+    first.unmount()
+    second.unmount()
+  })
+
+  it('uses the newly focused card after returning to a retained list', async () => {
+    const wrapper = mountComponent(false, true)
+    const cards = wrapper.findAllComponents(CardMovie)
+    for (let repeat = 0; repeat < 2; repeat++) {
+      cards[0].element.focus()
+      await cards[0].trigger('keydown', { key: 'ArrowRight' })
+      await flushPromises()
+      expect(document.activeElement).toBe(cards[1].element)
+    }
+    wrapper.unmount()
   })
 
   it('Отображает спиннер при загрузке', () => {
@@ -589,7 +607,9 @@ describe('Тесты компонента MovieList', () => {
 
     // Фокус должен оказаться на той позиции, которую даёт та же логика компонента
     expect(scrollSpy).toHaveBeenCalled()
-    expect(document.activeElement).toBe(cards[Math.max(Math.max(6 - columns, 0) - columns, 0)].element)
+    expect(document.activeElement).toBe(
+      cards[Math.max(Math.max(6 - columns, 0) - columns, 0)].element
+    )
   })
 
   it('Фокус двигается на 5 карточек вниз (или к последней) по ArrowDown', async () => {

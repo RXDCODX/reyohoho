@@ -9,6 +9,8 @@ import { useMainStore } from '@/store/main'
 import { usePlayerStore } from '@/store/player'
 import { trackAnalyticsEvent } from '@/utils/analytics'
 import { computed, ref } from 'vue'
+import { KINOBD_ENABLED } from '@/api/providerAvailability'
+import { getSafePlayerUrl } from '@/utils/playerSecurity'
 
 const normalizePlayerKey = (key) => String(key || '').toUpperCase()
 const KINOBOX_LOW_PRIORITY_PROVIDERS = new Set(['YOUTUBE'])
@@ -34,9 +36,9 @@ export function usePlayerSources({ props, getProviderDisplayName, onSelectedPlay
   const isKinoBdProvider = computed(
     () => mainStore.contentApiProvider === 'kinobd' && !String(props.kpId || '').startsWith('shiki')
   )
-  const canPickKinoBdSource = computed(() => !String(props.kpId || '').startsWith('shiki'))
+  const canPickKinoBdSource = computed(() => KINOBD_ENABLED && !String(props.kpId || '').startsWith('shiki'))
   const showSourceButton = computed(
-    () => isKinoBdProvider.value || (canPickKinoBdSource.value && !!playersEmptyMessage.value)
+    () => KINOBD_ENABLED && (isKinoBdProvider.value || (canPickKinoBdSource.value && !!playersEmptyMessage.value))
   )
   const selectedPlayerLabel = computed(() => {
     if (selectedPlayerInternal.value) {
@@ -81,7 +83,9 @@ export function usePlayerSources({ props, getProviderDisplayName, onSelectedPlay
         key: normalizePlayerKey(key),
         ...value
       }
-      const iframe = String(player?.iframe || '').trim()
+      const iframe = getSafePlayerUrl(player?.iframe)
+      if (!iframe) continue
+      player.iframe = iframe
       const identity = iframe || normalizePlayerKey(player.key)
       if (seenPlayers.has(identity)) continue
       seenPlayers.add(identity)

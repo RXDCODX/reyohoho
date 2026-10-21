@@ -4,7 +4,7 @@ export const routes = [
     component: () => import('@/components/MovieSearch.vue'),
     name: 'home',
     meta: {
-      title: 'ReYohoho - Поиск фильмов'
+      title: 'ReYohoho - поиск фильмов и сериалов онлайн бесплатно'
     }
   },
   {

@@ -1,3 +1,0 @@
-query UrbanAdsBanners($input: UrbanAdsInput!) {
-  urbanAds(input: $input)
-}

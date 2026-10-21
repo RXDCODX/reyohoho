@@ -1,9 +1,28 @@
 <template>
   <div class="wrapper">
     <div class="top-100-page" tabindex="0">
-      <h1 class="visually-hidden">Популярные фильмы и сериалы</h1>
-      <div class="controls">
-        <div class="filter-card time-card">
+      <header v-if="isKinopoiskTop" class="top-header">
+        <div class="top-heading">
+          <h1>Топ-250 Кинопоиска</h1>
+          <p>Лучшие {{ typeFilter === 'series' ? 'сериалы' : 'фильмы' }} по рейтингу зрителей</p>
+        </div>
+        <div class="top-tabs" role="group" aria-label="Тип подборки">
+          <button
+            v-for="btn in currentTypeFilters"
+            :key="btn.value"
+            class="filter-btn type-btn"
+            :class="{ active: typeFilter === btn.value }"
+            :aria-pressed="typeFilter === btn.value"
+            :disabled="loading"
+            @click="changeTypeFilter(btn.value)"
+          >
+            {{ btn.label }}
+          </button>
+        </div>
+      </header>
+      <h1 v-else class="visually-hidden">Популярные фильмы и сериалы</h1>
+      <div v-if="!isKinopoiskTop" class="controls">
+        <div v-if="!isKinopoiskTop" class="filter-card time-card">
           <div class="button-group time-buttons">
             <i class="material-icons card-icon">schedule</i>
             <template v-for="(btn, idx) in timeFilters" :key="idx">
@@ -64,13 +83,21 @@ import { computed, nextTick, onMounted, onServerPrefetch, onUnmounted, ref, watc
 import { useRoute, useRouter } from 'vue-router'
 import { useHead } from '@unhead/vue'
 import { buildStaticPageHead } from '@/utils/staticSeo'
+import { useMainStore } from '@/store/main'
+import { usePublicPageState } from '@/composables/usePublicPageState'
 
-useHead(
+const mainStore = useMainStore()
+const isKinopoiskTop = computed(() => mainStore.contentApiProvider !== 'local')
+
+useHead(() =>
   buildStaticPageHead({
     routePath: '/top',
-    title: 'Популярные фильмы и сериалы онлайн - ReYohoho',
-    description:
-      'Популярные фильмы и сериалы за сутки, неделю, месяц и всё время. Фильтры по типу и обсуждаемости на ReYohoho.'
+    title: isKinopoiskTop.value
+      ? 'Топ-250 фильмов и сериалов Кинопоиска - ReYohoho'
+      : 'Популярные фильмы и сериалы онлайн - ReYohoho',
+    description: isKinopoiskTop.value
+      ? '250 лучших фильмов и сериалов по рейтингу Кинопоиска. Русские названия, постеры и рейтинги.'
+      : 'Популярные фильмы и сериалы за сутки, неделю, месяц и всё время. Фильтры по типу и обсуждаемости на ReYohoho.'
   })
 )
 
@@ -112,7 +139,11 @@ const discussedTypeFilters = [
 ]
 
 const currentTypeFilters = computed(() =>
-  activeTimeFilter.value === 'discussed' ? discussedTypeFilters : normalTypeFilters
+  isKinopoiskTop.value
+    ? normalTypeFilters.filter((filter) => filter.value !== 'all')
+    : activeTimeFilter.value === 'discussed'
+      ? discussedTypeFilters
+      : normalTypeFilters
 )
 const visibleMovies = computed(() => movies.value)
 const canShowMore = computed(() => !loading.value && hasMore.value && !errorMessage.value)
@@ -209,6 +240,12 @@ const setupInfiniteScroll = async () => {
 }
 
 const applyRouteFilters = (query) => {
+  if (isKinopoiskTop.value) {
+    activeTimeFilter.value = 'top250'
+    typeFilter.value = query.type === 'series' ? 'series' : 'movie'
+    lastNormalTypeFilter.value = typeFilter.value
+    return
+  }
   const nextTime = typeof query.time === 'string' && query.time ? query.time : DEFAULT_ACTIVE_TIME
   const nextType = typeof query.type === 'string' && query.type ? query.type : null
 
@@ -242,8 +279,18 @@ const fetchMovies = async () => {
 }
 
 applyRouteFilters(route.query)
+const publicPage = usePublicPageState(`top:${route.fullPath}`)
+const initialPage = publicPage.read()
+if (initialPage && isKinopoiskTop.value) {
+  movies.value = initialPage.movies
+  hasMore.value = initialPage.hasMore
+  page.value = initialPage.page
+}
 
-onServerPrefetch(fetchMovies)
+onServerPrefetch(async () => {
+  await fetchMovies()
+  if (!errorMessage.value) publicPage.save({ movies: movies.value, hasMore: hasMore.value, page: page.value })
+})
 
 watch(canShowMore, (canLoad) => {
   if (canLoad) {
@@ -266,14 +313,13 @@ const changeTimeFilter = (apiUrl) => {
     typeFilter.value = lastNormalTypeFilter.value
   }
 
-  router
-    .push({
-      query: {
-        ...route.query,
-        time: activeTimeFilter.value,
-        type: typeFilter.value
-      }
-    })
+  router.push({
+    query: {
+      ...route.query,
+      time: activeTimeFilter.value,
+      type: typeFilter.value
+    }
+  })
 }
 
 const changeTypeFilter = (value) => {
@@ -282,13 +328,12 @@ const changeTypeFilter = (value) => {
     lastNormalTypeFilter.value = value
   }
 
-  router
-    .push({
-      query: {
-        ...route.query,
-        type: value
-      }
-    })
+  router.push({
+    query: {
+      ...route.query,
+      type: value
+    }
+  })
 }
 
 watch(
@@ -305,7 +350,8 @@ watch(
 
 onMounted(() => {
   applyRouteFilters(route.query)
-  if (!movies.value.length && !errorMessage.value) {
+  // Prerendered cards use the default remote provider, not persisted local preferences.
+  if (!isKinopoiskTop.value || (!movies.value.length && !errorMessage.value)) {
     fetchMovies().then(setupInfiniteScroll)
   } else {
     setupInfiniteScroll()
@@ -318,15 +364,74 @@ onUnmounted(disconnectInfiniteScroll)
 <style scoped>
 .wrapper {
   display: flex;
+  min-width: 0;
   min-height: 100vh;
 }
 
 .top-100-page {
   flex: 1;
+  min-width: 0;
   padding-top: 20px;
   padding-bottom: 40px;
   width: 100%;
   margin: 0 auto;
+}
+
+.top-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  padding: 0 15px;
+  margin-bottom: 24px;
+}
+
+.top-heading {
+  min-width: 0;
+}
+
+.top-heading h1 {
+  margin: 0;
+  font-size: clamp(1.4rem, 2.5vw, 2rem);
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.top-heading p {
+  margin: 8px 0 0;
+  color: #a8a8a8;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.top-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(28, 28, 28, 0.85);
+}
+
+.top-tabs .type-btn {
+  min-height: 40px;
+  padding: 8px 18px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.9rem;
+}
+
+.top-tabs .type-btn.active {
+  background: var(--accent-color);
+}
+
+.top-tabs .type-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
 .controls {
@@ -501,6 +606,21 @@ onUnmounted(disconnectInfiniteScroll)
 }
 
 @media (max-width: 600px) {
+  .top-header {
+    padding: 0 10px;
+    margin-bottom: 16px;
+  }
+
+  .top-tabs {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .top-tabs .type-btn {
+    flex: 1;
+    min-height: 44px;
+  }
+
   .button-group {
     flex-wrap: wrap;
     justify-content: center;
